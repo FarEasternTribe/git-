@@ -1398,7 +1398,7 @@ def write_onenote_fallback_html(markdown_file: Path, output_dir: Path) -> Path:
 
 def onenote_page_title(markdown_file: Path, markdown: str) -> str:
     # 同じ日付の日誌はOneNote上の同一タイトルにまとめる。
-    # 書き込み時は古いページを削除してから新しいページを作る。
+    # 書き込み時は同一タイトルと「タイトル_◯◯」形式の残骸ページを削除してから新しいページを作る。
     # unique_output_pathで作られる `_2`, `_3` などの枝番はタイトルから外す。
     return re.sub(r"_\d+$", "", markdown_file.stem)
 
@@ -1440,7 +1440,7 @@ $sectionNs.AddNamespace("one", $sectionDoc.DocumentElement.NamespaceURI)
 $pageId = $null
 $deletedCount = 0
 foreach ($page in $sectionDoc.SelectNodes("//one:Page", $sectionNs)) {
-  if ($page.name -eq $PageTitle) {
+  if ($page.name -eq $PageTitle -or $page.name -like ($PageTitle + "_*")) {
     $one.DeleteHierarchy($page.ID)
     $deletedCount += 1
   }

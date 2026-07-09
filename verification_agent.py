@@ -48,17 +48,21 @@ def parse_first_int(label: str, output: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+# 検証レポート自身の否定文（例:「出力に明確なTraceback/Exceptionは見つかりません。」）に
+# 反応しないよう、実際のエラー出力の形だけにマッチさせる。
+ERROR_TEXT_PATTERNS = [
+    re.compile(r"Traceback \(most recent call last\)"),
+    re.compile(r"^\s*(?:[A-Za-z_][\w.]*)?(?:Error|Exception)\s*[:：]", re.MULTILINE),
+    re.compile(r"Exception calling "),
+    re.compile(r"ParserError"),
+    re.compile(r"Notebook not found"),
+    re.compile(r"OneNote section not found"),
+    re.compile(r"失敗[:：]"),
+]
+
+
 def has_error_text(output: str) -> bool:
-    error_patterns = [
-        "Traceback",
-        "Exception",
-        "ParserError",
-        "UnicodeEncodeError",
-        "Notebook not found",
-        "OneNote section not found",
-        "失敗:",
-    ]
-    return any(pattern in output for pattern in error_patterns)
+    return any(pattern.search(output) for pattern in ERROR_TEXT_PATTERNS)
 
 
 def normalize_item(text: str) -> str:

@@ -93,6 +93,21 @@ function Get-LatestJournalFile {
   return $latest.FullName
 }
 
+function Get-AgentDeviceLabel {
+  # agent_onenote_logger.py の detect_device_label と同じ判定。
+  # Lenovo側で実行しても命令したLogがDesktop扱いにならないようにする。
+  $configured = $env:AGENT_DEVICE_LABEL
+  if (-not [string]::IsNullOrWhiteSpace($configured)) {
+    return $configured.Trim('[', ']')
+  }
+  $computerName = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { '' }
+  $upperName = $computerName.ToUpperInvariant()
+  if ($upperName -like '*LENOVO*') { return 'Lenovo' }
+  if ($upperName -like '*DESKTOP*') { return 'Desktop' }
+  if ($computerName) { return $computerName }
+  return 'UnknownPC'
+}
+
 function Write-AutoCommandLog {
   param(
     [Parameter(Mandatory = $true)]
@@ -107,7 +122,7 @@ function Write-AutoCommandLog {
   Push-Location $Workspace
   try {
     & powershell -NoProfile -ExecutionPolicy Bypass -File '.\append_onenote_command_log.ps1' `
-      -Device 'Desktop' `
+      -Device (Get-AgentDeviceLabel) `
       -Summary $Summary `
       -Actions $Actions `
       -Files $Files `
