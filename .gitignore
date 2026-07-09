@@ -1,0 +1,27 @@
+# Secrets / auth
+.env
+credentials.json
+token_google_tasks.json
+client_secret*.json
+*oauth*.json
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Runtime-generated data (created by the agents while running)
+agent_workspace/
+.note_agent_state/
+work/
+日誌/
+rawtext/
+papers/
+paper/
+summarize_paper/
+.docx/
+.pptx/
+.md/
+tools/orchestrator_agent_log.jsonl
+Experiment.pptx
+*.lnk
