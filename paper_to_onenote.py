@@ -9,10 +9,10 @@ from summarize_paper import OUTPUT_DIR, summarize_all_papers
 
 
 DEFAULT_ONENOTE_URL = (
-    "https://onedrive.live.com/personal/a7339f0ae206a171/_layouts/15/Doc.aspx"
-    "?sourcedoc={f7f406f3-baaf-419a-a32d-75fc01d375db}"
-    "&action=edit"
-    "&wd=target%28paper_summarize.one%7C6fa3b859-abcb-4556-8bed-ee1336e9398b%2F%29"
+    "onenote:https://d.docs.live.net/A7339F0AE206A171/"
+    "%E3%83%89%E3%82%AD%E3%83%A5%E3%83%A1%E3%83%B3%E3%83%88/"
+    "FarEasternTribe/paper_summarize.one"
+    "#section-id={887E9B60-85CD-4C6C-B715-BB60C56BA9D7}&end"
 )
 
 

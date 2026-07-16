@@ -17,9 +17,6 @@ from typing import Iterable
 
 WORKSPACE_DIR = Path(__file__).resolve().parent
 VENV_SITE_PACKAGES = WORKSPACE_DIR / ".venv" / "Lib" / "site-packages"
-BUNDLED_SITE_PACKAGES = Path(
-    r"C:\Users\laput\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages"
-)
 
 
 def site_packages_compatible(site_packages: Path) -> bool:
@@ -34,51 +31,42 @@ def site_packages_compatible(site_packages: Path) -> bool:
     return not compiled or any(abi_tag in path.name for path in compiled)
 
 
-# Keep packages from one compatible runtime together.  The project .venv is
-# preferred only when its compiled extensions match the current Python.
-for site_packages in (BUNDLED_SITE_PACKAGES, VENV_SITE_PACKAGES):
-    if site_packages_compatible(site_packages):
-        sys.path.insert(0, str(site_packages))
+# Fallback for when this script is invoked with an interpreter other than the
+# project .venv's own python.exe (which already has these on sys.path).
+if site_packages_compatible(VENV_SITE_PACKAGES):
+    sys.path.insert(0, str(VENV_SITE_PACKAGES))
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-try:
-    from dotenv import load_dotenv
-except ModuleNotFoundError:
-    def load_dotenv(*_args, **_kwargs) -> bool:
-        return False
+from agent_config import apply_secret_defaults, load_agent_env
 
 try:
-    from openai import OpenAI
+    from anthropic import Anthropic
 except ModuleNotFoundError:
-    class OpenAI:  # type: ignore[no-redef]
+    class Anthropic:  # type: ignore[no-redef]
         def __init__(self, *_args, **_kwargs):
-            raise RuntimeError("openai package is not installed. Install it or run with the bundled Codex Python.")
+            raise RuntimeError("anthropic package is not installed. Install it with: pip install -r requirements.txt")
+
+import llm_client
 
 
-DEFAULT_INPUT = "rawtext"
+# 日誌の元メモを置く共有rawtextフォルダ（旧OpenAI_Agent側）。orchestrator の DEFAULT_RAWTEXT_DIR と同一。
+# agent.ps1/orchestrator 経由ではこのパスが引数で明示的に渡されるが、summarize_note5.py を
+# 直接パス指定なしで実行した場合もこの共有フォルダを既定にする（ローカル rawtext\ ではなく）。
+# RAWTEXT_DIR 環境変数で上書き可能。
+DEFAULT_SHARED_RAWTEXT = (
+    r"C:\Users\laput\OneDrive - Kyoto University\2-総合デスクトップ(2024)"
+    r"\0000000000OpenAI_Agent\OpenAI-Agent\rawtext"
+)
+DEFAULT_INPUT = os.getenv("RAWTEXT_DIR", DEFAULT_SHARED_RAWTEXT)
 DEFAULT_OUTPUT_DIR = "日誌"
 DEFAULT_STATE_DIR = ".note_agent_state"
-DEFAULT_MODEL = "gpt-5"
+DEFAULT_MODEL = "claude-sonnet-5"
+DEFAULT_ONENOTE_NOTEBOOK_NAME = "FarEasternTribe"
 DEFAULT_ONENOTE_SECTION_NAME = "日誌"
 GOOGLE_TASK_BATCH_SIZE = 5
 GOOGLE_TASK_BATCH_PAUSE_SECONDS = 1.0
-
-
-def load_project_env(env_path: Path) -> None:
-    load_dotenv(env_path)
-    if not env_path.exists():
-        return
-    for raw_line in env_path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and not os.environ.get(key):
-            os.environ[key] = value
 
 
 # 研究OS コマンド仕様 Version 1.0
@@ -164,9 +152,19 @@ COMMAND_BLOCK_PATTERNS = [
 ]
 
 TODO_LINE_PATTERN = re.compile(
-    r"^\s*(?:[-*・□☐✅]?\s*)?(?:TODO|ToDo|To do|To d 0|やること|タスク)[:：]?\s*(.*)$",
+    r"^\s*(?:[-*・□☐✅]?\s*)?(?:TODO|ToDo|To do|To d 0|タスク)[:：]?\s*(.*)$|^\s*(?:[-*・□☐✅]?\s*)?やること[:：]\s*(.*)$",
     re.IGNORECASE,
 )
+
+
+def is_todo_continuation_after_blank(line: str) -> bool:
+    stripped = line.strip()
+    return bool(stripped) and bool(re.match(r"^(?:[-*・□☐✅])", stripped))
+
+
+def is_todo_end_marker(line: str) -> bool:
+    stripped = line.strip().casefold()
+    return "ここまで" in stripped and "todo" in stripped
 
 
 class DebouncedEventHandler:
@@ -239,7 +237,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default=DEFAULT_MODEL,
-        help=f"OpenAI APIで使うモデル。省略時は {DEFAULT_MODEL}",
+        help=f"Claude APIで使うモデル。省略時は {DEFAULT_MODEL}",
     )
     parser.add_argument(
         "--watch",
@@ -305,8 +303,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--local-summary",
+        dest="local_summary",
         action="store_true",
-        help="OpenAI APIを使わず、ローカル抽出だけで日誌Markdownを作る",
+        default=True,
+        help="Claude APIを使わず、ローカル抽出だけで日誌Markdownを作る（既定）",
+    )
+    parser.add_argument(
+        "--api-summary",
+        dest="local_summary",
+        action="store_false",
+        help="明示的にClaude APIを使って日誌Markdownを作る（課金あり・オプトイン）",
     )
     parser.add_argument(
         "--skip-ask",
@@ -724,13 +730,21 @@ def extract_todo_candidates(text: str) -> list[str]:
     todos = []
     lines = text.splitlines()
     in_todo_section = False
+    saw_blank_in_todo_section = False
 
     for line in lines:
         stripped = line.strip()
         if not stripped:
+            if in_todo_section:
+                saw_blank_in_todo_section = True
+            continue
+        if in_todo_section and is_todo_end_marker(stripped):
+            in_todo_section = False
+            saw_blank_in_todo_section = False
             continue
         if is_command_boundary(stripped):
             in_todo_section = False
+            saw_blank_in_todo_section = False
             continue
 
         at_match = AT_COMMAND_PATTERN.match(stripped)
@@ -738,6 +752,7 @@ def extract_todo_candidates(text: str) -> list[str]:
             name = at_match.group(1).casefold().strip()
             first_arg = (at_match.group(2) or "").strip()
             in_todo_section = name == "todo"
+            saw_blank_in_todo_section = False
             if in_todo_section and first_arg:
                 todos.append(first_arg)
             continue
@@ -745,12 +760,18 @@ def extract_todo_candidates(text: str) -> list[str]:
         match = TODO_LINE_PATTERN.match(stripped)
         if match:
             in_todo_section = True
-            rest = match.group(1).strip()
+            saw_blank_in_todo_section = False
+            rest = (match.group(1) or match.group(2) or "").strip()
             if rest:
                 todos.append(rest)
             continue
 
         if in_todo_section:
+            if saw_blank_in_todo_section and not is_todo_continuation_after_blank(stripped):
+                in_todo_section = False
+                saw_blank_in_todo_section = False
+                continue
+            saw_blank_in_todo_section = False
             if stripped.startswith(("-", "*", "・", "□", "☐")):
                 todos.append(stripped.lstrip("-*・□☐ ").strip())
             elif re.fullmatch(r"[-ーｰ－―\s]+", stripped):
@@ -818,12 +839,22 @@ def parse_at_commands(text: str) -> list[dict]:
         i += 1
 
         block_lines = []
+        saw_blank = False
         while i < len(lines):
             next_line = lines[i]
             if AT_COMMAND_PATTERN.match(next_line) or is_command_boundary(next_line):
                 break
-            if name == "todo" and not next_line.strip():
-                break
+            if name == "todo":
+                if is_todo_end_marker(next_line):
+                    break
+                if not next_line.strip():
+                    saw_blank = True
+                    block_lines.append(next_line)
+                    i += 1
+                    continue
+                if saw_blank and not is_todo_continuation_after_blank(next_line):
+                    break
+                saw_blank = False
             block_lines.append(next_line)
             i += 1
 
@@ -871,19 +902,6 @@ def normalize_instruction_body(body: str) -> str:
         normalized_lines.append(f"@{name} {rest}".rstrip())
 
     return "\n".join(normalized_lines).strip()
-
-
-def has_onenote_request(text: str) -> bool:
-    for command in parse_at_commands(text):
-        name = command["name"]
-        body = command["body"]
-        if name == "onenote":
-            return True
-        if name == "命令":
-            normalized_body = normalize_instruction_body(body)
-            if any(nested["name"] == "onenote" for nested in parse_at_commands(normalized_body)):
-                return True
-    return False
 
 
 def command_hash(command: dict, current_output_file: Path | None = None) -> str:
@@ -1000,11 +1018,37 @@ def print_command_report(report: dict, output_dir: Path) -> None:
     print(f"OneNote: {report.get('onenote_status', 'not_requested')}{suffix}")
 
 
-def audit_todo_registration(text: str, output_dir: Path) -> tuple[int, list[str]]:
+def read_manual_todo_copy_items(path: Path | None) -> list[str]:
+    if path is None or not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
+    match = re.search(r"^## コピー用\s*\n(?P<body>.*?)(?=^## |\Z)", text, flags=re.MULTILINE | re.DOTALL)
+    if not match:
+        return []
+    items: list[str] = []
+    for line in match.group("body").splitlines():
+        cleaned = line.strip().strip("-*・□☐✅ \t")
+        if cleaned:
+            items.append(cleaned)
+    return items
+
+
+def audit_todo_registration(text: str, output_dir: Path, manual_todo_path: Path | None = None) -> tuple[int, list[str]]:
     todo_items = []
     for command in parse_at_commands(text):
         if command["name"] == "todo":
             todo_items.extend(split_todo_body(command["body"]))
+
+    manual_items = read_manual_todo_copy_items(manual_todo_path)
+    manual_keys = {normalize_task_title(item) for item in manual_items}
+    if manual_keys:
+        missing_manual = [
+            item
+            for item in dict.fromkeys(todo_items)
+            if normalize_task_title(item) not in manual_keys
+        ]
+        if not missing_manual:
+            return len(todo_items), []
 
     log_path = output_dir / "command_execution_log.md"
     if not log_path.exists():
@@ -1014,7 +1058,10 @@ def audit_todo_registration(text: str, output_dir: Path) -> tuple[int, list[str]
     seen = set(re.findall(r"## .* @todo Google Tasks登録\n\n- (.*?)\n", log))
     seen.update(re.findall(r"## .* @todo Google Tasks既存タスクのためスキップ\n\n- (.*?)\n", log))
     seen.update(re.findall(r"## .* @todo Google Tasks実体確認OK\n\n- (.*?)\n", log))
-    missing = [item for item in dict.fromkeys(todo_items) if item not in seen]
+    seen_keys = {normalize_task_title(item) for item in seen}
+    if manual_keys:
+        seen_keys.update(manual_keys)
+    missing = [item for item in dict.fromkeys(todo_items) if normalize_task_title(item) not in seen_keys]
     return len(todo_items), missing
 
 
@@ -1398,7 +1445,7 @@ def write_onenote_fallback_html(markdown_file: Path, output_dir: Path) -> Path:
 
 def onenote_page_title(markdown_file: Path, markdown: str) -> str:
     # 同じ日付の日誌はOneNote上の同一タイトルにまとめる。
-    # 書き込み時は同一タイトルと「タイトル_◯◯」形式の残骸ページを削除してから新しいページを作る。
+    # 書き込み時は古いページを削除してから新しいページを作る。
     # unique_output_pathで作られる `_2`, `_3` などの枝番はタイトルから外す。
     return re.sub(r"_\d+$", "", markdown_file.stem)
 
@@ -1407,9 +1454,11 @@ def add_markdown_to_onenote(markdown_file: Path, section_name: str, output_dir: 
     markdown = markdown_file.read_text(encoding="utf-8-sig")
     title = onenote_page_title(markdown_file, markdown)
     page_xml = markdown_to_onenote_page_xml(title, markdown)
+    notebook_name = os.getenv("ONENOTE_NOTEBOOK_NAME", DEFAULT_ONENOTE_NOTEBOOK_NAME)
 
     ps_script = r"""
 param(
+  [Parameter(Mandatory=$true)][string]$NotebookName,
   [Parameter(Mandatory=$true)][string]$SectionName,
   [Parameter(Mandatory=$true)][string]$PageTitle,
   [Parameter(Mandatory=$true)][string]$PageXmlPath
@@ -1421,8 +1470,14 @@ $one.GetHierarchy("", 4, [ref]$hierarchy)
 [xml]$doc = $hierarchy
 $ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
 $ns.AddNamespace("one", $doc.DocumentElement.NamespaceURI)
+$notebook = $doc.SelectNodes("//one:Notebook", $ns) |
+  Where-Object { $_.name -eq $NotebookName } |
+  Select-Object -First 1
+if ($null -eq $notebook) {
+  throw "OneNote notebook not found: $NotebookName"
+}
 $section = $null
-foreach ($candidate in $doc.SelectNodes("//one:Section", $ns)) {
+foreach ($candidate in $notebook.SelectNodes(".//one:Section", $ns)) {
   if ($candidate.name -eq $SectionName) {
     $section = $candidate
     break
@@ -1440,7 +1495,7 @@ $sectionNs.AddNamespace("one", $sectionDoc.DocumentElement.NamespaceURI)
 $pageId = $null
 $deletedCount = 0
 foreach ($page in $sectionDoc.SelectNodes("//one:Page", $sectionNs)) {
-  if ($page.name -eq $PageTitle -or $page.name -like ($PageTitle + "_*")) {
+  if ($page.name -eq $PageTitle) {
     $one.DeleteHierarchy($page.ID)
     $deletedCount += 1
   }
@@ -1477,6 +1532,8 @@ Write-Output "$action $pageId"
                 "Bypass",
                 "-File",
                 str(ps_path),
+                "-NotebookName",
+                notebook_name,
                 "-SectionName",
                 section_name,
                 "-PageTitle",
@@ -1631,36 +1688,28 @@ def ask_answer_already_logged(output_dir: Path, question: str) -> bool:
     return question.strip() in text and "@ask 解析結果" in text
 
 
-def create_ask_response(client: OpenAI, model: str, prompt: str):
-    timeout_seconds = float(os.getenv("ASK_OPENAI_TIMEOUT_SECONDS", "90"))
-    try:
-        return client.responses.create(
-            model=model,
-            input=prompt,
-            tools=[{"type": "web_search_preview"}],
-            timeout=timeout_seconds,
-        )
-    except Exception:
-        return client.responses.create(model=model, input=prompt, timeout=timeout_seconds)
+def create_ask_response(client: Anthropic, model: str, prompt: str) -> str:
+    timeout_seconds = float(os.getenv("ASK_CLAUDE_TIMEOUT_SECONDS", "90"))
+    return llm_client.create_response(client, model, prompt, timeout=timeout_seconds, web_search=True)
 
 
 def run_ask_command(
     question: str,
     output_dir: Path,
-    client: OpenAI | None,
+    client: Anthropic | None,
     model: str,
     current_output_file: Path | None = None,
 ) -> bool:
     # --commands-only の場合でも @ask が使えるように、必要になった時点で client を作る。
     if client is None:
         try:
-            client = OpenAI()
+            client = llm_client.get_client()
         except Exception as exc:
             append_markdown_log(
                 output_dir,
                 "command_execution_log.md",
                 "@ask 実行エラー",
-                f"OpenAI client を作成できませんでした。OPENAI_API_KEY を確認してください。\n\nerror: {exc}",
+                f"Anthropic client を作成できませんでした。ANTHROPIC_API_KEY を確認してください。\n\nerror: {exc}",
             )
             return False
 
@@ -1679,8 +1728,7 @@ def run_ask_command(
 {question}
 """
     try:
-        response = create_ask_response(client, model, prompt)
-        answer = response.output_text.strip()
+        answer = create_ask_response(client, model, prompt)
         append_markdown_log(
             output_dir,
             "analysis.md",
@@ -1728,7 +1776,7 @@ def execute_at_commands(
     text: str,
     output_dir: Path,
     state: dict,
-    client: OpenAI,
+    client: Anthropic,
     model: str,
     python_timeout: int,
     sync_google_todos: bool,
@@ -2282,7 +2330,7 @@ def run_verification_agent(
         return False
 
 
-def summarize_once(args: argparse.Namespace, client: OpenAI, reason: str = "manual run") -> bool:
+def summarize_once(args: argparse.Namespace, client: Anthropic, reason: str = "manual run") -> bool:
     input_path = resolve_path(args.input)
     output_dir = resolve_path(args.output_dir)
     state_dir = resolve_path(args.state_dir)
@@ -2376,12 +2424,12 @@ def summarize_once(args: argparse.Namespace, client: OpenAI, reason: str = "manu
     if args.local_summary:
         summary_body = local_extractive_summary(target_note, args.date)
     else:
-        response = client.responses.create(
-            model=args.model,
-            input=build_prompt(target_note, args.date, delta_only=args.delta_only),
-            timeout=float(os.getenv("SUMMARY_OPENAI_TIMEOUT_SECONDS", "180")),
+        summary_body = llm_client.create_response(
+            client,
+            args.model,
+            build_prompt(target_note, args.date, delta_only=args.delta_only),
+            timeout=float(os.getenv("SUMMARY_CLAUDE_TIMEOUT_SECONDS", "180")),
         )
-        summary_body = response.output_text.strip()
     summary = summary_body + build_raw_text_appendix(input_path, target_note)
 
     output_file = write_summary(
@@ -2452,7 +2500,7 @@ def summarize_once(args: argparse.Namespace, client: OpenAI, reason: str = "manu
         print(f"Google Tasks手動投入用: {manual_todo_path}")
     if args.execute_commands:
         print_command_report(command_report, output_dir)
-        total_todos, missing_todos = audit_todo_registration(command_target_note, output_dir)
+        total_todos, missing_todos = audit_todo_registration(command_target_note, output_dir, manual_todo_path)
         print(f"@todo監査: 対象{total_todos}件 / 未確認{len(missing_todos)}件")
         for item in missing_todos:
             print(f"  - {item}")
@@ -2479,7 +2527,7 @@ def summarize_once(args: argparse.Namespace, client: OpenAI, reason: str = "manu
     return True
 
 
-def watch_with_polling(args: argparse.Namespace, client: OpenAI) -> None:
+def watch_with_polling(args: argparse.Namespace, client: Anthropic) -> None:
     interval_seconds = max(1.0, args.interval_minutes * 60.0)
     print(f"[watch:poll] {args.input} を {args.interval_minutes} 分ごとに確認します。Ctrl+Cで終了。")
     try:
@@ -2490,7 +2538,7 @@ def watch_with_polling(args: argparse.Namespace, client: OpenAI) -> None:
         print("\n監視を終了しました。")
 
 
-def watch_with_watchdog(args: argparse.Namespace, client: OpenAI) -> None:
+def watch_with_watchdog(args: argparse.Namespace, client: Anthropic) -> None:
     try:
         from watchdog.observers import Observer
     except ImportError:
@@ -2554,14 +2602,17 @@ def print_rules() -> None:
 
 
 def main() -> None:
-    load_project_env(WORKSPACE_DIR / ".env")
+    load_agent_env()
+    apply_secret_defaults()
     args = parse_args()
+    if args.local_summary:
+        args.skip_ask = True
     if args.show_rules:
         print_rules()
         return
-    # commands-only/local-summary では通常OpenAI APIを使わない。
+    # commands-only/local-summary では通常Claude APIを使わない。
     # @askが現れた場合だけ run_ask_command 内で遅延作成する。
-    client = None if (args.commands_only or args.local_summary) else OpenAI()
+    client = None if (args.commands_only or args.local_summary) else llm_client.get_client()
 
     if args.watch:
         if not args.no_initial_run:

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
-import platform
-import subprocess
 import sys
+from functools import partial
 from datetime import datetime
 from pathlib import Path
+
+from agent_common import detect_device_label, run_workspace_command
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -22,31 +22,7 @@ APPEND_SCRIPT = WORKSPACE_DIR / "append_onenote_command_log.ps1"
 MIGRATION_CHECK = WORKSPACE_DIR / "migration_check.py"
 
 
-def detect_device_label() -> str:
-    configured = os.getenv("AGENT_DEVICE_LABEL", "").strip()
-    if configured:
-        return configured.strip("[]")
-    computer_name = (os.getenv("COMPUTERNAME") or platform.node() or "").strip()
-    upper_name = computer_name.upper()
-    if "LENOVO" in upper_name:
-        return "Lenovo"
-    if "DESKTOP" in upper_name:
-        return "Desktop"
-    return computer_name or "UnknownPC"
-
-
-def run_command(command: list[str], timeout: int = 180) -> tuple[int, str]:
-    completed = subprocess.run(
-        command,
-        cwd=WORKSPACE_DIR,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=timeout,
-    )
-    return completed.returncode, completed.stdout.strip()
+run_command = partial(run_workspace_command, workspace=WORKSPACE_DIR, timeout=180)
 
 
 def load_state() -> dict:

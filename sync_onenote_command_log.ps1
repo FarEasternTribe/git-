@@ -1,6 +1,6 @@
 ﻿param(
   [string]$NotebookName = 'OpenAI_Agent1',
-  [string]$SectionName = '命令したLog',
+  [string]$SectionName = '命令したLog_Claude',
   [string]$OutputDir = '.\agent_workspace\司令塔Agent\onenote_command_log'
 )
 
@@ -36,12 +36,16 @@ try {
     $_.name -eq $SectionName
   } | Select-Object -First 1)
 
+  # Claude専用セクションは初回のappend時に自動作成されるため、
+  # まだ存在しない場合はエラーにせず「ページ0件」として同期する
+  $sectionPages = @()
   if ($null -eq $section) {
-    throw "Section not found: $NotebookName / $SectionName"
+    Write-Host "Section not found yet (treated as empty): $NotebookName / $SectionName"
+  } else {
+    [xml]$sectionXml = ''
+    $one.GetHierarchy($section.ID, 4, [ref]$sectionXml)
+    $sectionPages = @($sectionXml.DocumentElement.SelectNodes('.//*[local-name()="Page"]'))
   }
-
-  [xml]$sectionXml = ''
-  $one.GetHierarchy($section.ID, 4, [ref]$sectionXml)
 
   $statePath = Join-Path $OutputPath 'state.json'
   $previousState = @{}
@@ -61,7 +65,7 @@ try {
   $pages = New-Object System.Collections.ArrayList
   $changedPages = New-Object System.Collections.ArrayList
 
-  foreach ($page in @($sectionXml.DocumentElement.SelectNodes('.//*[local-name()="Page"]'))) {
+  foreach ($page in $sectionPages) {
     $pageXmlText = ''
     try {
       $one.GetPageContent($page.ID, [ref]$pageXmlText, 0)
@@ -83,8 +87,14 @@ try {
     $sha = [System.Security.Cryptography.SHA256]::Create()
     $hash = [System.BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
     $safeTitle = ($page.name -replace '[\\/:*?"<>|]', '_')
-    if ($safeTitle.Length -gt 80) {
-      $safeTitle = $safeTitle.Substring(0, 80)
+    # Windows MAX_PATH(260) ガード: OneDrive の深いベースパスでも
+    # <SnapshotDir>\<stamp>_<title>.md が上限を超えないよう題名長を抑える。
+    # (stamp は 'yyyyMMdd_HHmmss' 固定15文字 + 区切り2文字 + '.md' 3文字 = 20文字を予約)
+    $maxTitleLen = 250 - $SnapshotDir.Length - 20
+    if ($maxTitleLen -gt 80) { $maxTitleLen = 80 }
+    if ($maxTitleLen -lt 8) { $maxTitleLen = 8 }
+    if ($safeTitle.Length -gt $maxTitleLen) {
+      $safeTitle = $safeTitle.Substring(0, $maxTitleLen)
     }
     $stamp = ''
     if ($page.lastModifiedTime) {

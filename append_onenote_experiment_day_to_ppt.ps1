@@ -1,6 +1,6 @@
 ﻿param(
   [string]$Date = (Get-Date).ToString('yyyy-MM-dd'),
-  [string]$NotebookName = '2026実験',
+  [string]$NotebookName = 'FarEasternTribe',
   [string]$SectionName = '実験',
   [string]$Pptx = '.\Experiment.pptx',
   [string]$Device = '',
@@ -11,6 +11,7 @@
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'toolsgent_common.ps1')
 
 $Workspace = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location $Workspace
@@ -65,19 +66,6 @@ function Get-DatePatterns([datetime]$DateValue) {
     ($DateValue.ToString('yyyy年M月d日')),
     ($DateValue.ToString('M月d日'))
   )
-}
-
-function Get-SectionPath($Section) {
-  $parts = New-Object System.Collections.ArrayList
-  $node = $Section
-  while ($null -ne $node -and $node.LocalName -ne 'Notebook') {
-    if (($node.LocalName -eq 'Section' -or $node.LocalName -eq 'SectionGroup') -and
-        -not [string]::IsNullOrWhiteSpace($node.name)) {
-      [void]$parts.Insert(0, [string]$node.name)
-    }
-    $node = $node.ParentNode
-  }
-  return ($parts -join ' / ')
 }
 
 function Add-TextSlide($Presentation, [string]$Title, [string]$Meta, [string]$Body) {
@@ -247,7 +235,13 @@ try {
     $ReplaceDateSlides = $true
   }
 
-  $pptxPath = Resolve-Path -LiteralPath $Pptx
+  if (Test-Path -LiteralPath $Pptx) {
+    $pptxPath = (Resolve-Path -LiteralPath $Pptx).Path
+  } else {
+    # Experiment.pptx が無い端末（.gitignore対象で未コピー等）でも実行できるよう、
+    # 絶対パスだけ先に決めておき、後段（PowerPoint起動時）で新規作成する。
+    $pptxPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine((Get-Location).Path, $Pptx))
+  }
   New-Item -ItemType Directory -Path $OutboxDir -Force | Out-Null
   $assetDir = Join-Path $OutboxDir ("assets_" + $dateValue.ToString('yyyyMMdd'))
   New-Item -ItemType Directory -Path $assetDir -Force | Out-Null
@@ -414,7 +408,14 @@ try {
 
   $powerpoint = New-Object -ComObject PowerPoint.Application
   $powerpoint.Visible = -1
-  $presentation = $powerpoint.Presentations.Open($pptxPath.Path, $false, $false, $true)
+  if (Test-Path -LiteralPath $pptxPath) {
+    $presentation = $powerpoint.Presentations.Open($pptxPath, $false, $false, $true)
+  } else {
+    # この端末にまだ Experiment.pptx が無い場合は新規作成してから追記する。
+    $presentation = $powerpoint.Presentations.Add($true)
+    $presentation.SaveAs($pptxPath)
+    Write-Host "Created new PPTX: $pptxPath"
+  }
   $removedSlides = 0
   if ($ReplaceDateSlides) {
     $removedSlides = Remove-DateSlides $presentation $dateKey
@@ -445,7 +446,7 @@ try {
     appended_at = (Get-Date).ToString('s')
     date = $dateKey
     device = $Device
-    pptx = $pptxPath.Path
+    pptx = $pptxPath
     notebook = [string]$notebook.name
     section_filter = $SectionName
     page_count = $matchedPages.Count
@@ -457,7 +458,7 @@ try {
   $state.appended = @($state.appended) + @($record)
   $state | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statePath -Encoding UTF8
 
-  Write-Host "PPTX: $($pptxPath.Path)"
+  Write-Host "PPTX: $pptxPath"
   Write-Host "Date: $dateKey"
   Write-Host "Pages: $($matchedPages.Count)"
   Write-Host "Images: $imageCount"

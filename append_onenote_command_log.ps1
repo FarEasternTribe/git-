@@ -1,8 +1,8 @@
 ﻿param(
   [string]$NotebookName = 'OpenAI_Agent1',
-  [string]$SectionName = '命令したLog',
+  [string]$SectionName = '命令したLog_Claude',
   [string]$Device = '',
-  [string]$Actor = 'Codex',
+  [string]$Actor = 'Claude',
   [Parameter(Mandatory = $true)]
   [string]$Summary,
   [string[]]$Actions = @(),
@@ -61,8 +61,15 @@ $now = Get-Date
 $stamp = $now.ToString('yyyyMMdd_HHmmss')
 $title = "[$Device] " + $now.ToString('yyyy-MM-dd HH:mm') + " " + $Summary
 $safeTitle = ($title -replace '[\\/:*?"<>|]', '_')
-if ($safeTitle.Length -gt 110) {
-  $safeTitle = $safeTitle.Substring(0, 110)
+# Windows MAX_PATH(260) ガード: OneDrive の深いベースパスでも
+# <OutboxDir>\<stamp>_<title>.md が上限を超えないようファイル名用の題名長を抑える。
+# (stamp は 'yyyyMMdd_HHmmss' 固定15文字 + 区切り2文字 + '.md' 3文字 = 20文字を予約。
+#  OneNoteページ側のタイトルは $title のまま全文を使うのでここでの短縮はファイル名だけに影響)
+$maxTitleLen = 250 - $OutboxDir.Length - 20
+if ($maxTitleLen -gt 110) { $maxTitleLen = 110 }
+if ($maxTitleLen -lt 8) { $maxTitleLen = 8 }
+if ($safeTitle.Length -gt $maxTitleLen) {
+  $safeTitle = $safeTitle.Substring(0, $maxTitleLen)
 }
 
 $markdown = @(
@@ -108,7 +115,13 @@ try {
     $_.name -eq $SectionName
   } | Select-Object -First 1)
   if ($null -eq $section) {
-    throw "Section not found: $NotebookName / $SectionName"
+    # 初回実行時はClaude専用セクションがまだ無いので作成する（cfSection = 3）
+    $newSectionId = ''
+    $one.OpenHierarchy($notebook.path + $SectionName + '.one', '', [ref]$newSectionId, 3)
+    if ([string]::IsNullOrWhiteSpace($newSectionId)) {
+      throw "Section not found or could not be created: $NotebookName / $SectionName"
+    }
+    $section = [pscustomobject]@{ ID = $newSectionId }
   }
 
   $pageId = ''

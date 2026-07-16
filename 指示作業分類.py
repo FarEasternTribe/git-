@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
-import tempfile
 from pathlib import Path
+
+from agent_common import ps_single_quoted, run_powershell_script
 
 
 DEFAULT_NOTEBOOK = "2025年書込テスト"
@@ -135,10 +135,6 @@ CATEGORY_RULES = [
         ],
     },
 ]
-
-
-def ps_single_quoted(text: str) -> str:
-    return "'" + text.replace("'", "''") + "'"
 
 
 def build_powershell_script(
@@ -403,27 +399,6 @@ foreach ($item in $failed) {{
 """
 
 
-def run_powershell(script: str) -> subprocess.CompletedProcess[str]:
-    with tempfile.TemporaryDirectory(prefix="onenote_classify_") as tmp:
-        ps_path = Path(tmp) / "classify_onenote.ps1"
-        ps_path.write_text(script, encoding="utf-8-sig")
-        return subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(ps_path),
-            ],
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -450,7 +425,7 @@ def main() -> int:
         reset_classification_pages=not args.keep_existing,
         map_file=args.map_file,
     )
-    result = run_powershell(script)
+    result = run_powershell_script(script)
     if result.stdout:
         print(result.stdout.rstrip())
     if result.stderr:

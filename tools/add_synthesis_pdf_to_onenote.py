@@ -12,6 +12,11 @@ from pathlib import Path
 
 
 WORKSPACE_DIR = Path(__file__).resolve().parents[1]
+if str(WORKSPACE_DIR) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_DIR))
+
+from agent_common import escape_cdata, ps_single_quoted
+
 DEFAULT_NOTEBOOK = "2026実験"
 DEFAULT_SECTION = "有機合成"
 
@@ -23,14 +28,6 @@ class ExtractionResult:
     experimental_snippets: list[str]
     condition_rows: list[tuple[str, str]]
     text_char_count: int
-
-
-def ps_single_quoted(text: str) -> str:
-    return "'" + text.replace("'", "''") + "'"
-
-
-def escape_cdata(text: str) -> str:
-    return text.replace("]]>", "]]]]><![CDATA[>")
 
 
 def normalize_text(text: str) -> str:

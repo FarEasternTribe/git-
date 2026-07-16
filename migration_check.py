@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from agent_config import env_file, google_credentials_path, google_token_path
+
 
 WORKSPACE_DIR = Path(__file__).resolve().parent
 DEFAULT_REPORT_DIR = WORKSPACE_DIR / "agent_workspace" / "司令塔Agent" / "summaries"
@@ -58,14 +60,6 @@ def load_env_file(path: Path) -> dict[str, str]:
         key, value = line.split("=", 1)
         values[key.strip()] = value.strip().strip('"').strip("'")
     return values
-
-
-def resolve_config_path(value: str | None, default_name: str) -> Path:
-    raw = value or default_name
-    path = Path(raw)
-    if not path.is_absolute():
-        path = WORKSPACE_DIR / path
-    return path
 
 
 def import_available(module_name: str) -> bool:
@@ -130,13 +124,18 @@ def check_project_files() -> list[Check]:
         "orchestrator_agent.py",
         "verification_agent.py",
         "conversation_log_agent.py",
+        "agent_common.py",
+        "agent_config.py",
         "agent_onenote_logger.py",
         "agent_file_logger.py",
+        "agent_runtime.py",
+        "llm_client.py",
         "daily_command_log_check.py",
         "mutual_command_log_monitor.py",
         "sync_google_todo_queue.py",
         "setup_google_tasks.py",
         "tools/add_synthesis_pdf_to_onenote.py",
+        "tools/agent_common.ps1",
         "tools/organic_synthesis_agent.ps1",
         "tools/paper_search_agent.ps1",
         "tools/onenote_search_agent.ps1",
@@ -170,59 +169,80 @@ def check_project_files() -> list[Check]:
 
 
 def check_env_and_auth() -> list[Check]:
-    env_file = WORKSPACE_DIR / ".env"
+    external_env = env_file()
+    legacy_env = WORKSPACE_DIR / ".env"
     env_example = WORKSPACE_DIR / ".env.example"
-    env = load_env_file(env_file)
+    env = load_env_file(external_env)
+    if not env:
+        env = load_env_file(legacy_env)
     checks: list[Check] = [
-        check_path_exists(".env", env_file, "file", "Copy .env from the old PC or create it from .env.example."),
+        Check(
+            "External agent.env",
+            "OK",
+            f"Configured: {external_env}" if external_env.exists() else "Not present; optional API integrations remain disabled.",
+            "Create agent.env outside the workspace only when an explicit API integration is needed.",
+        ),
         check_path_exists(".env.example", env_example, "file", "Restore .env.example from the project."),
     ]
+    if legacy_env.exists():
+        checks.append(Check("Legacy workspace .env", "WARN", "A secret-bearing .env remains inside the workspace.", "Move it to the external secret directory."))
 
-    openai_key = env.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    anthropic_key = env.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
     checks.append(
         Check(
-            "OPENAI_API_KEY",
-            "OK" if openai_key else "WARN",
-            "Configured." if openai_key else "Not configured in .env or environment.",
-            "Set OPENAI_API_KEY in .env if agents should call OpenAI APIs directly.",
+            "ANTHROPIC_API_KEY",
+            "OK",
+            "Configured for explicit API tools." if anthropic_key else "Not configured; journal generation remains local-only by default.",
+            "Set ANTHROPIC_API_KEY only when an explicitly API-based tool (--api-summary etc.) is required.",
         )
     )
 
-    google_sync = env.get("GOOGLE_TODO_SYNC", os.environ.get("GOOGLE_TODO_SYNC", ""))
+    google_sync = env.get("GOOGLE_TODO_SYNC", os.environ.get("GOOGLE_TODO_SYNC", "")).strip().lower()
+    google_sync_enabled = google_sync in {"1", "true", "yes", "on"}
     checks.append(
         Check(
             "GOOGLE_TODO_SYNC",
-            "OK" if google_sync == "1" else "WARN",
-            f"Value: {google_sync or '(unset)'}",
-            "Set GOOGLE_TODO_SYNC=1 if @todo should be pushed to Google Tasks.",
+            "OK",
+            "Enabled." if google_sync_enabled else "Disabled; TODO items stay local/manual.",
+            "Set GOOGLE_TODO_SYNC=1 only when Google Tasks synchronization is wanted.",
         )
     )
 
-    credentials = resolve_config_path(
-        env.get("GOOGLE_TASKS_CREDENTIALS") or os.environ.get("GOOGLE_TASKS_CREDENTIALS"),
-        "credentials.json",
-    )
-    token = resolve_config_path(
-        env.get("GOOGLE_TASKS_TOKEN") or os.environ.get("GOOGLE_TASKS_TOKEN"),
-        "token_google_tasks.json",
-    )
-    checks.append(
-        check_path_exists(
-            "Google Tasks OAuth client",
-            credentials,
-            "file",
-            "Copy credentials.json or download a new OAuth client JSON from Google Cloud.",
+    def _resolve_from_env(key: str, default_path):
+        raw = env.get(key) or os.environ.get(key)
+        if raw:
+            raw_path = Path(os.path.expandvars(raw)).expanduser()
+            return raw_path if raw_path.is_absolute() else WORKSPACE_DIR / raw_path
+        return default_path
+
+    def _with_legacy_fallback(path: Path, legacy_name: str) -> Path:
+        legacy = WORKSPACE_DIR / legacy_name
+        return legacy if not path.exists() and legacy.exists() else path
+
+    # 実行時は load_agent_env()/apply_secret_defaults() と同じ優先順
+    # （env設定→外部secrets既定→レガシーworkspaceファイル）でパスを解決する。
+    credentials = _with_legacy_fallback(_resolve_from_env("GOOGLE_TASKS_CREDENTIALS", google_credentials_path()), "credentials.json")
+    token = _with_legacy_fallback(_resolve_from_env("GOOGLE_TASKS_TOKEN", google_token_path()), "token_google_tasks.json")
+    if google_sync_enabled:
+        checks.append(
+            check_path_exists(
+                "Google Tasks OAuth client",
+                credentials,
+                "file",
+                "Copy credentials.json or download a new OAuth client JSON from Google Cloud.",
+            )
         )
-    )
-    checks.append(
-        check_path_exists(
-            "Google Tasks token",
-            token,
-            "file",
-            "Run setup_google_tasks.py on the new PC to authorize Google Tasks.",
+        checks.append(
+            check_path_exists(
+                "Google Tasks token",
+                token,
+                "file",
+                "Run setup_google_tasks.py on the new PC to authorize Google Tasks.",
+            )
         )
-    )
-    checks.extend(check_google_json(credentials, token))
+        checks.extend(check_google_json(credentials, token))
+    else:
+        checks.append(Check("Google Tasks credentials", "OK", "Not required while Google synchronization is disabled."))
     return checks
 
 

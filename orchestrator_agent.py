@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from conversation_log_agent import log_conversation
@@ -14,10 +16,18 @@ from verification_agent import verify_and_log
 
 
 WORKSPACE_DIR = Path(__file__).resolve().parent
-PYTHON_LAUNCHER = ["py", "-3"]
-BUNDLED_PYTHON = Path(
-    r"C:\Users\laput\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+# サブプロセスは、agent.ps1 がこのorchestratorを起動したのと同じPython
+# （通常はプロジェクト .venv）で実行する。sys.executable が取れない特殊
+# ケースだけ py -3 にフォールバックする。
+PYTHON_LAUNCHER = [sys.executable] if sys.executable else ["py", "-3"]
+
+# 日誌・@コマンドの元メモを置くrawtextフォルダ。
+# 既定は旧OpenAI_Agent側の共有rawtext。RAWTEXT_DIR環境変数で上書き可能。
+DEFAULT_RAWTEXT_DIR = (
+    r"C:\Users\laput\OneDrive - Kyoto University\2-総合デスクトップ(2024)"
+    r"\0000000000OpenAI_Agent\OpenAI-Agent\rawtext"
 )
+RAWTEXT_DIR = os.getenv("RAWTEXT_DIR", DEFAULT_RAWTEXT_DIR)
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -28,10 +38,12 @@ JOURNAL_SCRIPT = WORKSPACE_DIR / "summarize_note5.py"
 CLASSIFIER_SCRIPT = WORKSPACE_DIR / "指示作業Onenote分類.py"
 CONVERSATION_LOG_SCRIPT = WORKSPACE_DIR / "conversation_log_agent.py"
 EXPERIMENT_PPT_SCRIPT = WORKSPACE_DIR / "append_onenote_experiment_day_to_ppt.ps1"
+EXPERIMENT_TRACKER_SCRIPT = WORKSPACE_DIR / "experiment_tracker.ps1"
 GOOGLE_TODO_SYNC_SCRIPT = WORKSPACE_DIR / "sync_google_todo_queue.py"
 DEVICE_MONITOR_SCRIPT = WORKSPACE_DIR / "mutual_command_log_monitor.py"
 TOOLS_DIR = WORKSPACE_DIR / "tools"
 PAPER_SEARCH_SCRIPT = TOOLS_DIR / "paper_search_agent.ps1"
+PAPER_INDEX_SCRIPT = WORKSPACE_DIR / "paper_index_agent.py"
 ROUTE_LOG = TOOLS_DIR / "orchestrator_agent_log.jsonl"
 
 
@@ -43,6 +55,7 @@ class Route:
     verification: list[str]
     requires_external_send: bool = False
     requires_write: bool = False
+    clarification_question: str | None = None
 
 
 @dataclass
@@ -57,12 +70,27 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", "", text).casefold()
 
 
+def clarification_route(text: str) -> Route:
+    target = "添付ファイル" if ".pdf" in text.casefold() else "ご依頼"
+    return Route(
+        agent="確認Agent",
+        reason="対象または完了条件を一意に判断できないため、実行前の確認が必要です。",
+        command=[],
+        verification=["回答を受け取るまで書き込みや外部送信を開始しない"],
+        clarification_question=(
+            f"{target}について、何をどこまで行いますか？ "
+            "（例: 要約のみ／要約してINDEX登録／要約・INDEX登録・OneNote反映まで）"
+        ),
+    )
+
+
 def extract_notebook(text: str) -> str | None:
     quoted = re.findall(r"[「『\"]([^」』\"]+)[」』\"]", text)
     if quoted:
         return quoted[0].strip()
 
     candidates = [
+        "FarEasternTribe",
         "2026実験",
         "2026年実験",
         "2026年書き込みテスト",
@@ -96,21 +124,90 @@ def extract_search_query(text: str) -> str:
 
 
 def extract_date_arg(text: str) -> str | None:
+    # 年つきの完全な日付を最優先（2026-07-13 / 2026/07/13 / 2026年7月13日 / 20260713 等）。
     match = re.search(r"(20\d{2})[-/年.]?(\d{1,2})[-/月.]?(\d{1,2})", text)
-    if not match:
+    if match:
+        year, month, day = match.groups()
+        try:
+            return datetime(int(year), int(month), int(day)).strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+
+    # 相対日付語（今日/本日=当日, 昨日=前日, 一昨日=2日前, 明日=翌日, 明後日=2日後）。
+    # 「今日の実験ノートを転記して」「昨日の実験まとめて」等の自然文で対象日を解決する。
+    # 「一昨日」は「昨日」を部分文字列に含むため、より長い語を先に判定する。
+    relative_map = [
+        (("今日", "本日", "きょう", "ほんじつ"), 0),
+        (("一昨日", "おととい"), -2),
+        (("昨日", "きのう", "前日"), -1),
+        (("明後日", "あさって"), 2),
+        (("明日", "あした", "あす"), 1),
+    ]
+    for words, delta in relative_map:
+        if any(word in text for word in words):
+            return (date.today() + timedelta(days=delta)).strftime("%Y-%m-%d")
+
+    # 年なしの「月/日」指定（例: 7/13, 07/13, 7-13, 7月13日, 全角７／１３）は年を補う。
+    # 「XX/YYの実験ノート転記して」のような自然文で対象日を指定できるようにする。
+    # 小数(3.5g など)との誤認を避けるため、区切りに "." は使わない。
+    normalized = text.translate(str.maketrans("０１２３４５６７８９／－", "0123456789/-"))
+    md = re.search(r"(?<!\d)(\d{1,2})\s*[/月-]\s*(\d{1,2})日?(?!\d)", normalized)
+    if md:
+        month, day = int(md.group(1)), int(md.group(2))
+        today = date.today()
+        try:
+            candidate = date(today.year, month, day)
+        except ValueError:
+            return None
+        # 当年だと未来日になる場合は前年の実験ノートとみなす（過去メモの転記が主目的のため）。
+        if candidate > today:
+            try:
+                candidate = date(today.year - 1, month, day)
+            except ValueError:
+                return None
+        return candidate.strftime("%Y-%m-%d")
+
+    return None
+
+
+def extract_days_arg(text: str) -> int | None:
+    # 「直近30日」「過去14日」「2週間」「1ヶ月」等から対象日数を推定する（進行中実験ボードの期間指定）。
+    normalized = text.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+    m = re.search(r"(\d{1,3})\s*(日間|日|週間|週|ヶ月|カ月|か月|月)", normalized)
+    if not m:
         return None
-    year, month, day = match.groups()
-    return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    n = int(m.group(1))
+    unit = m.group(2)
+    if n <= 0:
+        return None
+    if unit.startswith("日"):
+        days = n
+    elif "週" in unit:
+        days = n * 7
+    else:  # 月系
+        days = n * 30
+    return min(days, 365)
 
 
 def journal_route(text: str, execute: bool) -> Route:
-    python_command = [str(BUNDLED_PYTHON)] if BUNDLED_PYTHON.exists() else PYTHON_LAUNCHER
-    local_summary = any(word in normalize_text(text) for word in ["ローカル", "local", "外部apiなし", "apiなし"])
-    command = [*python_command, "-u", str(JOURNAL_SCRIPT)]
-    if local_summary:
-        command.extend(["--local-summary", "--execute-commands", "--no-sync-google-todos", "--manual-google-tasks", "--skip-ask"])
+    python_command = PYTHON_LAUNCHER
+    # ユーザー方針（2026-07-09決定）: 日誌は既定でローカル要約に固定する。
+    # - Claude APIを呼ばない（--local-summary）＝課金なし
+    # - Google TasksへAPI送信しない（--no-sync-google-todos --manual-google-tasks）
+    #   ＝Googleへ送らず、コピペ用の手動投入用リストだけ生成
+    # - @ask（Claude＋web検索）も無効（--skip-ask）
+    # ※Claude要約は「api要約」「api-summary」等の明示指定があるときだけ
+    #   --api-summary でオプトイン実行する（そのときだけ課金）。
+    normalized = normalize_text(text)
+    use_api_summary = any(word in normalized for word in ["api要約", "claudeapi使用", "api使用", "api-summary", "apisummary"])
+    command = [*python_command, "-u", str(JOURNAL_SCRIPT), RAWTEXT_DIR]
+    if use_api_summary:
+        command.extend(["--api-summary", "--execute-commands", "--no-sync-google-todos", "--manual-google-tasks"])
     else:
-        command.extend(["--execute-commands", "--sync-google-todos"])
+        command.extend([
+            "--local-summary", "--execute-commands",
+            "--no-sync-google-todos", "--manual-google-tasks", "--skip-ask",
+        ])
     if "上書き" in text or "overwrite" in text.casefold():
         command.append("--overwrite")
     if "差分" in text:
@@ -118,48 +215,57 @@ def journal_route(text: str, execute: bool) -> Route:
     if "強制" in text or "force" in text.casefold():
         command.append("--force")
 
+    if use_api_summary:
+        reason = "明示的なAPI要約指定による日誌生成です（Claude API使用・Google Tasks送信なし）。"
+    else:
+        reason = "ローカル要約による日誌生成です（Claude API・Google Tasks送信なし）。"
     return Route(
         agent="日誌Agent",
-        reason="外部APIを使わないローカル日誌生成です。" if local_summary else "日誌、生活ログ、研究ログ、要約に関する依頼です。",
+        reason=reason,
         command=command,
         verification=[
             "Markdown日誌が保存されたことを確認する",
             "末尾に生データセクションが含まれることを確認する",
-            "外部APIを使わないローカル生成であることを確認する" if local_summary else "OneNoteの日誌ページが作成/更新されたことを読み取り確認する",
-            "Google Tasks手動投入用TodoListが作成され、@todo全件が反映されたことを確認する" if local_summary else "Google Tasks同期対象がある場合は実体確認する",
+            *([] if use_api_summary else ["外部APIを使わないローカル生成であることを確認する"]),
+            "Google Tasks手動投入用TodoListが作成され、@todo全件が反映されたことを確認する",
             "OneNote本文に主要語（研究/生活など）が含まれることを確認する",
         ],
-        requires_external_send=not local_summary,
+        requires_external_send=use_api_summary,
         requires_write=execute,
     )
 
 
 def command_execution_route(text: str, execute: bool) -> Route:
-    python_command = [str(BUNDLED_PYTHON)] if BUNDLED_PYTHON.exists() else PYTHON_LAUNCHER
+    python_command = PYTHON_LAUNCHER
+    # ユーザー方針: Google TasksへAPI送信しない（手動投入用リストのみ）。
+    # @ask（Claude＋web検索）も無効。@todo/@python 等のローカル処理は従来通り。
     command = [
         *python_command,
         "-u",
         str(JOURNAL_SCRIPT),
+        RAWTEXT_DIR,
         "--commands-only",
         "--execute-commands",
-        "--sync-google-todos",
+        "--no-sync-google-todos",
+        "--manual-google-tasks",
+        "--skip-ask",
     ]
     return Route(
         agent="日誌Agent",
-        reason="rawtext内の@コマンド実行に関する依頼です。",
+        reason="rawtext内の@コマンド実行に関する依頼です（Google Tasks送信・@askなし）。",
         command=command,
         verification=[
             "@コマンド実行ログが出力されたことを確認する",
-            "Google Tasks同期対象がある場合は同期結果を確認する",
+            "Google Tasks手動投入用TodoListが更新されたことを確認する",
             "エラーがないことを検証Agentで確認する",
         ],
-        requires_external_send=True,
+        requires_external_send=False,
         requires_write=True,
     )
 
 
 def google_tasks_sync_route(text: str) -> Route:
-    python_command = [str(BUNDLED_PYTHON)] if BUNDLED_PYTHON.exists() else PYTHON_LAUNCHER
+    python_command = PYTHON_LAUNCHER
     command = [*python_command, str(GOOGLE_TODO_SYNC_SCRIPT)]
     if "dry" in text.casefold() or "確認だけ" in text or "ドライラン" in text:
         command.append("--dry-run")
@@ -172,6 +278,33 @@ def google_tasks_sync_route(text: str) -> Route:
             "同期済み/未同期キューの状態を確認する",
         ],
         requires_write="--dry-run" not in command,
+    )
+
+
+def experiment_tracker_route(text: str) -> Route:
+    # 進行中実験ボード（experiment_tracker.ps1）: OneNote実験ノートを段階推定して
+    # 要対応順のボードをローカル出力する。読み取りのみ・課金なし。
+    command = [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(EXPERIMENT_TRACKER_SCRIPT),
+    ]
+    # 「直近30日」「過去2週間」等の対象期間指定があれば -Days に渡す（無ければ既定21日）。
+    days = extract_days_arg(text)
+    if days:
+        command += ["-Days", str(days)]
+    return Route(
+        agent="実験ノートAgent",
+        reason="OneNoteの実験ノートから進行中実験ボードを生成する依頼です。",
+        command=command,
+        verification=[
+            "OneNote FarEasternTribe/実験の直近ページを読めたことを確認する",
+            "進行中実験ボード（Markdown）が生成されたことを確認する",
+        ],
+        requires_write=True,
     )
 
 
@@ -196,7 +329,7 @@ def experiment_ppt_route(text: str) -> Route:
         reason="OneNoteの実験ノートをExperiment.pptxへ転記する依頼です。",
         command=command,
         verification=[
-            "OneNote 2026実験/実験の同日ページを読めたことを確認する",
+            "OneNote FarEasternTribe/実験の同日ページを読めたことを確認する",
             "Experiment.pptxへ日付・本文・画像スライドが追記されたことを確認する",
             "画像がある場合は抽出件数とスライド反映を確認する",
             "重複防止stateが更新されたことを確認する",
@@ -206,7 +339,7 @@ def experiment_ppt_route(text: str) -> Route:
 
 
 def device_monitor_route(text: str) -> Route:
-    python_command = [str(BUNDLED_PYTHON)] if BUNDLED_PYTHON.exists() else PYTHON_LAUNCHER
+    python_command = PYTHON_LAUNCHER
     command = [*python_command, str(DEVICE_MONITOR_SCRIPT)]
     return Route(
         agent="端末相互監視Agent",
@@ -265,6 +398,69 @@ def search_route(text: str) -> Route:
             "検索結果の件数を確認する",
             "各結果にページ名、セクション、OneNoteリンクが含まれることを確認する",
         ],
+    )
+
+
+def paper_index_route(text: str) -> Route:
+    # PaperIndexAgent はローカルのPDF索引・要約ツール（Claude API不使用・課金なし）。
+    python_command = PYTHON_LAUNCHER
+    command = [*python_command, "-u", str(PAPER_INDEX_SCRIPT)]
+
+    search_match = re.search(r"(?:--search|search|検索)\s+[\"']([^\"']+)[\"']", text, flags=re.IGNORECASE)
+    if not search_match:
+        search_match = re.search(r"(?:--search|search|検索)\s+([^\s]+)", text, flags=re.IGNORECASE)
+    if search_match:
+        command.extend(["--search", search_match.group(1).strip()])
+    elif any(word in normalize_text(text) for word in ["検索", "search"]):
+        query = extract_search_query(text)
+        if query and normalize_text(query) not in {"paperindex", "論文index", "論文索引"}:
+            command.extend(["--search", query])
+
+    if any(word in normalize_text(text) for word in ["初期化", "init", "作成", "更新", "再構築", "rebuild"]):
+        command.append("--init")
+    if "overwrite" in text.casefold() or "上書き" in text:
+        command.append("--overwrite")
+
+    if any(word in normalize_text(text) for word in ["要約", "summary", "summarize"]):
+        command.append("--require-summary")
+
+    def add_path_arg(raw_value: str) -> None:
+        cleaned = raw_value.strip().strip("\"'")
+        if not cleaned or cleaned.startswith("--"):
+            return
+        if cleaned.lower() in {"paper-index", "paperindex"}:
+            return
+        if search_match and cleaned == search_match.group(1).strip():
+            return
+        if cleaned not in command:
+            command.append(cleaned)
+
+    # Accept Windows/OneDrive paths that do not contain the word "paper".
+    # PowerShell removes quotes before agent.ps1 receives argv, so the route
+    # must recover full PDF paths from the joined request text.
+    for match in re.finditer(r"[A-Za-z]:\\.*?\.pdf", text, flags=re.IGNORECASE):
+        add_path_arg(match.group(0))
+    for match in re.finditer(r"(?:\.\\|/)[^\r\n\"']*?\.pdf", text, flags=re.IGNORECASE):
+        add_path_arg(match.group(0))
+
+    quoted_paths = re.findall(r"[\"']([^\"']+\.pdf|[^\"']*papers?[^\"']*)[\"']", text, flags=re.IGNORECASE)
+    for raw_path in quoted_paths:
+        add_path_arg(raw_path)
+    for raw_path in re.findall(r"(?<!\S)(?:\.\\|[A-Za-z]:\\|/)?[^\s\"']*(?:papers|paper)[^\s\"']*(?:\.pdf)?", text, flags=re.IGNORECASE):
+        add_path_arg(raw_path)
+
+    return Route(
+        agent="PaperIndexAgent",
+        reason="論文PDFライブラリの要約・Markdown索引・MASTER_INDEX/Excel/CSV更新に関する依頼です。",
+        command=command,
+        verification=[
+            "papers/library/PDFs が存在することを確認する",
+            "papers/library/index/MASTER_INDEX.md が存在し、件数が出力と整合することを確認する",
+            "papers/library/INDEX.md、papers_index.xlsx、papers_index.csv が生成されることを確認する",
+            "各PDFのMarkdown索引と summaries/ の要約ファイルを確認する",
+            "検索モードでは該当IndexとDOI/PDF情報が返ることを確認する",
+        ],
+        requires_write="--search" not in command,
     )
 
 
@@ -377,6 +573,24 @@ def route_request(text: str, execute: bool) -> Route:
     if any(
         word in normalized
         for word in [
+            "進行中の実験",
+            "進行中実験",
+            "実験の進捗",
+            "実験進捗",
+            "実験ボード",
+            "実験トラッカー",
+            "実験の状況",
+            "実験状況",
+            "実験の棚卸",
+            "どの反応",
+        ]
+    ):
+        # 進行中実験ボードは、PPT転記(実験＋まとめ/転記)より先に判定する。
+        # 「実験の進捗をまとめて」のように "まとめ" を含んでもボード生成を優先する。
+        return experiment_tracker_route(text)
+    if any(
+        word in normalized
+        for word in [
             "実験ppt",
             "experiment.pptx",
             "実験ノートagent",
@@ -386,8 +600,21 @@ def route_request(text: str, execute: bool) -> Route:
             "実験ppt作成",
             "experiment-onenote-day",
         ]
+    ) or (
+        # 「今日の実験まとめて」「実験をまとめて」等の自然文も OneNote実験ノート→PPT転記に回す。
+        # 「実験」＋（まとめ／転記／PPT系）の同時出現を条件にして過検出を防ぐ
+        # （日誌ルートの "要約" より前で判定される）。
+        "実験" in normalized
+        and any(
+            word in normalized
+            for word in ["まとめ", "転記", "ppt", "pptx", "パワポ", "パワーポイント", "スライド"]
+        )
     ):
         return experiment_ppt_route(text)
+    if ".pdf" in text.casefold() and any(word in text.casefold() for word in ["要約", "summary", "summarize"]):
+        return paper_index_route(text)
+    if any(word in normalized for word in ["paper-index", "paperindex", "master_index", "論文index", "論文索引", "pdf索引", "index化", "ｉｎｄｅｘ化", "論文pdfライブラリ", "論文ライブラリ"]):
+        return paper_index_route(text)
     if any(word in normalized for word in ["論文検索", "文献検索", "論文を探", "文献を探", "papersearch", "literaturesearch"]):
         return paper_search_route(text)
     if any(
@@ -413,12 +640,7 @@ def route_request(text: str, execute: bool) -> Route:
         return journal_route(text, execute)
     if any(word in normalized for word in ["探", "検索", "どこ", "onenoteから"]):
         return search_route(text)
-    return Route(
-        agent="司令塔Agent",
-        reason="専門Agentを確定できませんでした。",
-        command=[],
-        verification=["依頼内容を明確化する"],
-    )
+    return clarification_route(text)
 
 
 def append_route_log(request: str, route: Route, exit_code: int | None = None) -> None:
@@ -431,6 +653,7 @@ def append_route_log(request: str, route: Route, exit_code: int | None = None) -
         "verification": route.verification,
         "requires_external_send": route.requires_external_send,
         "requires_write": route.requires_write,
+        "clarification_question": route.clarification_question,
         "exit_code": exit_code,
     }
     with ROUTE_LOG.open("a", encoding="utf-8") as f:
@@ -450,6 +673,8 @@ def print_route(route: Route) -> None:
     print("Verification:")
     for item in route.verification:
         print(f"  - {item}")
+    if route.clarification_question:
+        print(f"確認質問: {route.clarification_question}")
 
 
 def run_command(command: list[str]) -> int:
@@ -656,7 +881,12 @@ def build_repair_command(route: Route, request: str, output: str) -> list[str] |
         return command
 
     if route.agent == "端末相互監視Agent":
-        return command
+        # 端末相互監視Agentの警告（多くはOneNote COMが非対話セッションで
+        # 使えないこと由来）は同一コマンドの再実行では直らないため、
+        # 他の未対応Agentと同様に「修正コマンドを作れない」扱いにする。
+        # これをせずに元コマンドをそのまま返すと、検証→警告→無意味な
+        # 再実行→また警告、のループになる。
+        return None
 
     return None
 
@@ -858,6 +1088,9 @@ def main() -> int:
 
     route = route_request(request, execute=args.execute)
     print_route(route)
+    if route.clarification_question:
+        append_route_log(request, route, 2)
+        return 2
     auto_run = should_auto_run(request, route)
     if auto_run and not args.run:
         print("AutoRun: 日誌、実行ショートカットとして外部送信可で日誌Agentを実行します。")

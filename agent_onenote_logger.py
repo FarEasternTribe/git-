@@ -3,45 +3,23 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import platform
 import subprocess
-import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
+from agent_common import detect_device_label, escape_cdata, ps_single_quoted
 from agent_file_logger import write_markdown_record
 
 
 WORKSPACE_DIR = Path(__file__).resolve().parent
 DEFAULT_NOTEBOOK = os.getenv("AGENT_LOG_NOTEBOOK", "OpenAI_agent1")
 DEFAULT_PDF_DIRS = [WORKSPACE_DIR / "paper", WORKSPACE_DIR / "papers"]
-COMMAND_LOG_SECTION = "命令したLog"
-
-
-def detect_device_label() -> str:
-    configured = os.getenv("AGENT_DEVICE_LABEL", "").strip()
-    if configured:
-        return configured.strip("[]")
-    computer_name = (os.getenv("COMPUTERNAME") or platform.node() or "").strip()
-    upper_name = computer_name.upper()
-    if "LENOVO" in upper_name:
-        return "Lenovo"
-    if "DESKTOP" in upper_name:
-        return "Desktop"
-    return computer_name or "UnknownPC"
+COMMAND_LOG_SECTION = "命令したLog_Claude"
 
 
 def device_prefix() -> str:
     return f"[{detect_device_label()}]"
-
-
-def ps_single_quoted(text: str) -> str:
-    return "'" + text.replace("'", "''") + "'"
-
-
-def escape_cdata(text: str) -> str:
-    return text.replace("]]>", "]]]]><![CDATA[>")
 
 
 def find_recent_pdfs(limit: int = 10) -> list[Path]:
@@ -145,28 +123,16 @@ $section = $notebook.SelectNodes('.//*[local-name()="Section"]') |
   Select-Object -First 1
 
 if ($null -eq $section) {{
-  $ns = $notebook.NamespaceURI
-  $section = $hierarchy.CreateElement('one', 'Section', $ns)
-  $section.SetAttribute('name', $SectionName)
-  $section.SetAttribute('path', $notebook.path + $SectionName + '.one')
-  $firstSectionGroup = $notebook.SelectNodes('./*[local-name()="SectionGroup"]') | Select-Object -First 1
-  if ($null -ne $firstSectionGroup) {{
-    [void]$notebook.InsertBefore($section, $firstSectionGroup)
-  }} else {{
-    [void]$notebook.AppendChild($section)
+  # セクションが無い場合はOpenHierarchy（cfSection = 3）で作成する。
+  # XML階層の直接操作＋UpdateHierarchyはID未確定のまま返ることがあり
+  # CreateNewPageが0x80042004で失敗するため使わない。
+  $newSectionId = ''
+  $one.OpenHierarchy($notebook.path + $SectionName + '.one', '', [ref]$newSectionId, 3)
+  if ([string]::IsNullOrWhiteSpace($newSectionId)) {{
+    throw "Section not found or could not be created: $SectionName"
   }}
-  $one.UpdateHierarchy($notebook.OuterXml)
-  Start-Sleep -Milliseconds 800
-  [xml]$hierarchy = ''
-  $one.GetHierarchy('', 4, [ref]$hierarchy)
-  $notebook = $hierarchy.DocumentElement.SelectNodes('//*') |
-    Where-Object {{ $_.LocalName -eq 'Notebook' -and $_.name -eq $NotebookName }} |
-    Select-Object -First 1
-  $section = $notebook.SelectNodes('.//*[local-name()="Section"]') |
-    Where-Object {{ $_.name -eq $SectionName }} |
-    Select-Object -First 1
+  $section = [pscustomobject]@{{ ID = $newSectionId }}
 }}
-if ($null -eq $section) {{ throw "Section not found or could not be created: $SectionName" }}
 
 $pageId = ''
 $one.CreateNewPage($section.ID, [ref]$pageId, 0)

@@ -5,9 +5,10 @@ import difflib
 import re
 import subprocess
 import sys
-import tempfile
 import unicodedata
 from pathlib import Path
+
+from agent_common import ps_single_quoted, run_powershell_script
 
 
 DEFAULT_MAP_DIR = Path("tools") / "onenote_classification_maps"
@@ -137,10 +138,6 @@ CATEGORY_RULES = [
         ],
     },
 ]
-
-
-def ps_single_quoted(text: str) -> str:
-    return "'" + text.replace("'", "''") + "'"
 
 
 def build_powershell_script(
@@ -782,27 +779,6 @@ def resolve_map_file(map_file: Path | None, notebook: str) -> Path:
         return map_file
     return DEFAULT_MAP_DIR / f"{safe_filename_part(notebook)}.json"
 
-def run_powershell(script: str) -> subprocess.CompletedProcess[str]:
-    with tempfile.TemporaryDirectory(prefix="onenote_classify_") as tmp:
-        ps_path = Path(tmp) / "classify_onenote.ps1"
-        ps_path.write_text(script, encoding="utf-8-sig")
-        return subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(ps_path),
-            ],
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -833,7 +809,7 @@ def main() -> int:
         map_file=map_file,
         incremental=not args.full_rebuild,
     )
-    result = run_powershell(script)
+    result = run_powershell_script(script)
     if result.stdout:
         print(result.stdout.rstrip())
     if result.stderr:

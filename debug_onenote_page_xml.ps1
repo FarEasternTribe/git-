@@ -1,5 +1,5 @@
 ﻿param(
-  [string]$NotebookName = '2026実験',
+  [string]$NotebookName = 'FarEasternTribe',
   [string]$SectionName = '実験',
   [string]$DatePattern = '20260708',
   [string]$Out = '.\agent_workspace\実験ノートAgent\onenote_to_ppt\20260708_page_xml_debug.xml'

@@ -13,8 +13,7 @@ for site_packages in (VENV_SITE_PACKAGES, BUNDLED_SITE_PACKAGES):
     if site_packages.exists():
         sys.path.insert(0, str(site_packages))
 
-from dotenv import load_dotenv
-
+from agent_config import apply_secret_defaults, load_agent_env
 import summarize_note5 as summarize_note
 
 
@@ -46,7 +45,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    load_dotenv(summarize_note.WORKSPACE_DIR / ".env")
+    load_agent_env()
+    apply_secret_defaults()
     args = parse_args()
     credentials_path = Path(args.credentials)
     token_path = Path(args.token)
@@ -54,7 +54,7 @@ def main() -> None:
     if not credentials_path.exists():
         print(f"[missing] {credentials_path}")
         print("Download an OAuth desktop client JSON from Google Cloud.")
-        print("Save it as credentials.json in this OpenAI-Agent folder.")
+        print("Save it in the external secret directory shown by: .\agent.ps1 secrets-status")
         raise SystemExit(2)
 
     service = summarize_note.build_google_tasks_service(credentials_path, token_path, interactive_auth=True)

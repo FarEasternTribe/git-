@@ -5,6 +5,11 @@ token_google_tasks.json
 client_secret*.json
 *oauth*.json
 
+# Runtime state / backups
+.secrets/
+.agent_runtime/
+backups/
+
 # Python
 .venv/
 __pycache__/

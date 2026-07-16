@@ -4,6 +4,7 @@
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'agent_common.ps1')
 
 $terms = @(
   $Query,
@@ -30,24 +31,6 @@ Write-Host '役割: 論文・文献・根拠ソースを探索し、候補ごと
 Write-Host '必須出力: ソースとなる文献のDOIを必ず添付する。DOIが見つからない場合は探索範囲と代替一次ソースを明示する'
 Write-Host ('Query: {0}' -f $Query)
 Write-Host ''
-
-function Get-SectionPath($Section) {
-  $parts = New-Object System.Collections.ArrayList
-  $node = $Section
-  while ($null -ne $node -and $node.LocalName -ne 'Notebook') {
-    if (($node.LocalName -eq 'Section' -or $node.LocalName -eq 'SectionGroup') -and
-        -not [string]::IsNullOrWhiteSpace($node.name)) {
-      [void]$parts.Insert(0, [string]$node.name)
-    }
-    $node = $node.ParentNode
-  }
-  return ($parts -join ' / ')
-}
-
-function Get-DoiList([string]$Text) {
-  $matches = [regex]::Matches($Text, '\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b', 'IgnoreCase')
-  return @($matches | ForEach-Object { $_.Value.TrimEnd('.', ',', ';', ')') } | Select-Object -Unique)
-}
 
 function Get-Snippet([string]$Text, [string[]]$Terms) {
   $normalized = (($Text -replace '\s+', ' ').Trim())

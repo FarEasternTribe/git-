@@ -15,8 +15,7 @@ for site_packages in (VENV_SITE_PACKAGES, BUNDLED_SITE_PACKAGES):
     if site_packages.exists():
         sys.path.insert(0, str(site_packages))
 
-from dotenv import load_dotenv
-
+from agent_config import apply_secret_defaults, load_agent_env
 import summarize_note5 as summarize_note
 
 
@@ -91,7 +90,8 @@ def write_queue(path: Path, records: list[dict], invalid_lines: list[str]) -> No
 
 
 def main() -> None:
-    load_dotenv(summarize_note.WORKSPACE_DIR / ".env")
+    load_agent_env()
+    apply_secret_defaults()
     args = parse_args()
 
     queue_path = summarize_note.resolve_path(args.queue)
