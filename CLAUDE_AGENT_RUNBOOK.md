@@ -87,6 +87,7 @@ Use `agent.ps1` for common actions, same action names as the Codex version:
 .\agent.ps1 paper-search
 .\agent.ps1 experiment-note-latest
 .\agent.ps1 experiment-onenote-day -Date 2026-07-09
+.\agent.ps1 journal-task-status
 .\agent.ps1 sync-command-log
 .\agent.ps1 log-command -Summary "この端末で実施した内容"   # Desktop/Lenovoは自動判定
 .\agent.ps1 migration-check
@@ -206,6 +207,49 @@ shared rawtext. Pass an explicit path (or set `RAWTEXT_DIR`) only to override.
 ```powershell
 .\.venv\Scripts\python.exe .\summarize_note5.py "<RAWTEXT_DIR>" --api-summary
 ```
+
+### OneNote To Do tags from `@Todo` blocks (2026-07-16、Codex移植)
+
+When the source contains an `@Todo` / `＠Todo` block, those items are appended to the very end of
+the OneNote journal page as real unchecked OneNote **To Do** tags (the same checkboxes applied by
+`Ctrl+1`). Voice/OCR input written as `& Todo` is treated as the same marker.
+
+When an existing journal page is updated, its current OneNote task list is authoritative:
+existing tasks keep their text, order, and checked state; only newly encountered source Todos are
+appended. Previously sent source keys are tracked in `日誌/onenote_todo_source_state.json`, so a
+typo corrected manually in OneNote is not reverted and the old rawtext spelling is not re-added.
+
+### Check journal task progress
+
+Treat the actual OneNote To Do tag state as the source of truth. For questions like
+`あと何が残ってる？` / `終わったタスクは？`, read the page first:
+
+```powershell
+.\agent.ps1 journal-task-status
+.\agent.ps1 journal-task-status -Date 2026-07-16
+```
+
+Do not infer completion from the Markdown file because checkbox state changes later in OneNote.
+
+### OneNote handwritten-note transcription trigger
+
+`XXX、文字起こし` → transcribe the OneNote page titled exactly `XXX`:
+
+1. Exact-title search across all notebooks (multiple matches → stop and ask).
+2. Export to PDF: `powershell -ExecutionPolicy Bypass -File .\tools\export_onenote_page_pdf.ps1 -PageTitle "XXX" -Out ".\tmp\pdfs\XXX_handwriting.pdf"`
+3. Render pages at 300 DPI, transcribe in reading order; unclear text → `［要確認］`.
+4. Save to `agent_workspace\OneNote検索Agent\XXX_手書き文字起こし.md`.
+5. Create a new page `XXX_手書き文字起こし` with `tools\create_onenote_text_page.ps1` (never edit the source page).
+6. Read back and verify; delete temp files; log to 命令したLog_Claude.
+
+`XXX、更新分だけ文字起こし` → run `tools\detect_onenote_transcription_updates.ps1 -PageTitle "XXX"`,
+transcribe only the changed-region images in `manifest.json`
+(`ChangedRegionCount=0` → report no update), append to a new page
+`XXX_手書き文字起こし_更新_YYYYMMDD-HHmmss`, then commit the baseline with `-CommitBaseline`
+**only after** read-back verification. Baseline lives under
+`.agent_runtime\transcription_state\<SHA-256 title key>\baseline`.
+Note: `pdftoppm` (Poppler) is required; the Claude fork falls back to the Codex runtime's bundled
+Poppler on this PC if it is not on PATH.
 
 ### Route a request through the orchestrator
 

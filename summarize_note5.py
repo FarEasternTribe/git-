@@ -825,7 +825,12 @@ def parse_at_commands(text: str) -> list[dict]:
     - ＠命令\npython daily_paper_search.py
     """
     commands: list[dict] = []
-    lines = text.splitlines()
+    # Some voice/OCR inputs turn the full-width ＠Todo marker into "& Todo".
+    # Preserve that established journal input as a Todo marker as well.
+    lines = [
+        re.sub(r"^\s*[&＆]\s*todo\b", "@todo", line, flags=re.IGNORECASE)
+        for line in text.splitlines()
+    ]
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -1096,6 +1101,21 @@ def split_todo_body(body: str) -> list[str]:
     if not todos and body.strip():
         todos.append(body.strip())
     return todos
+
+
+def extract_explicit_todo_items(text: str) -> list[str]:
+    """Return only tasks written inside @todo/＠todo command blocks."""
+    items: list[str] = []
+    seen: set[str] = set()
+    for command in parse_at_commands(text):
+        if command["name"].casefold() != "todo":
+            continue
+        for item in split_todo_body(command["body"]):
+            key = normalize_task_title(item)
+            if key and key not in seen:
+                seen.add(key)
+                items.append(item)
+    return items
 
 
 def build_google_tasks_service(credentials_path: Path, token_path: Path, interactive_auth: bool | None = None):
@@ -1376,7 +1396,11 @@ def markdown_to_simple_html(markdown: str, title: str) -> str:
     return "\n".join(body_parts)
 
 
-def markdown_to_onenote_page_xml(page_title: str, markdown: str) -> str:
+def markdown_to_onenote_page_xml(
+    page_title: str,
+    markdown: str,
+    todo_items: Iterable[str] = (),
+) -> str:
     def cdata(text: str) -> str:
         return text.replace("]]>", "]]]]><![CDATA[>")
 
@@ -1401,9 +1425,35 @@ def markdown_to_onenote_page_xml(page_title: str, markdown: str) -> str:
             "      </one:OE>"
         )
 
+    deduped_todos: list[str] = []
+    seen_todos: set[str] = set()
+    for item in todo_items:
+        cleaned = item.strip().strip("-*・□☐✅ \t")
+        key = normalize_task_title(cleaned)
+        if cleaned and key and key not in seen_todos:
+            seen_todos.add(key)
+            deduped_todos.append(cleaned)
+
+    # Ctrl+1 in OneNote applies the built-in To Do tag.  TagDef declares that
+    # tag for the page; each final OE refers to it as an unchecked task.
+    for item in deduped_todos:
+        oe_parts.append(
+            "      <one:OE>\n"
+            "        <one:Tag index=\"0\" completed=\"false\"/>\n"
+            f"        <one:T><![CDATA[{cdata(item)}]]></one:T>\n"
+            "      </one:OE>"
+        )
+
+    tag_definition = ""
+    if deduped_todos:
+        tag_definition = (
+            "  <one:TagDef index=\"0\" type=\"0\" symbol=\"3\" "
+            "fontColor=\"automatic\" highlightColor=\"none\" name=\"To Do\"/>\n"
+        )
+
     return f"""<?xml version="1.0"?>
 <one:Page xmlns:one="http://schemas.microsoft.com/office/onenote/2013/onenote" ID="__PAGE_ID__">
-  <one:Title>
+{tag_definition}  <one:Title>
     <one:OE>
       <one:T><![CDATA[{cdata(page_title)}]]></one:T>
     </one:OE>
@@ -1416,6 +1466,38 @@ def markdown_to_onenote_page_xml(page_title: str, markdown: str) -> str:
   </one:Outline>
 </one:Page>
 """
+
+
+def select_new_onenote_todos(todo_items: Iterable[str], seen_source_keys: Iterable[str]) -> tuple[list[str], list[str]]:
+    """Select source Todos not previously sent, independent of later OneNote edits."""
+    seen = {key for key in seen_source_keys if key}
+    all_keys = list(seen)
+    new_items: list[str] = []
+    for item in todo_items:
+        cleaned = item.strip().strip("-*・□☐✅ \t")
+        key = normalize_task_title(cleaned)
+        if not cleaned or not key or key in seen:
+            continue
+        seen.add(key)
+        all_keys.append(key)
+        new_items.append(cleaned)
+    return new_items, all_keys
+
+
+def load_onenote_todo_source_state(output_dir: Path) -> dict:
+    path = output_dir / "onenote_todo_source_state.json"
+    if not path.exists():
+        return {"pages": {}}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        return data if isinstance(data, dict) else {"pages": {}}
+    except (OSError, json.JSONDecodeError):
+        return {"pages": {}}
+
+
+def save_onenote_todo_source_state(output_dir: Path, state: dict) -> None:
+    path = output_dir / "onenote_todo_source_state.json"
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def write_onenote_fallback_html(markdown_file: Path, output_dir: Path) -> Path:
@@ -1450,10 +1532,21 @@ def onenote_page_title(markdown_file: Path, markdown: str) -> str:
     return re.sub(r"_\d+$", "", markdown_file.stem)
 
 
-def add_markdown_to_onenote(markdown_file: Path, section_name: str, output_dir: Path) -> tuple[bool, str]:
+def add_markdown_to_onenote(
+    markdown_file: Path,
+    section_name: str,
+    output_dir: Path,
+    todo_items: Iterable[str] = (),
+) -> tuple[bool, str]:
     markdown = markdown_file.read_text(encoding="utf-8-sig")
     title = onenote_page_title(markdown_file, markdown)
-    page_xml = markdown_to_onenote_page_xml(title, markdown)
+    todo_state = load_onenote_todo_source_state(output_dir)
+    pages = todo_state.setdefault("pages", {})
+    page_state = pages.setdefault(title, {})
+    bootstrap_source_state = "seen_source_keys" not in page_state
+    seen_source_keys = page_state.get("seen_source_keys", [])
+    new_todo_items, updated_source_keys = select_new_onenote_todos(todo_items, seen_source_keys)
+    page_xml = markdown_to_onenote_page_xml(title, markdown, todo_items=new_todo_items)
     notebook_name = os.getenv("ONENOTE_NOTEBOOK_NAME", DEFAULT_ONENOTE_NOTEBOOK_NAME)
 
     ps_script = r"""
@@ -1461,7 +1554,8 @@ param(
   [Parameter(Mandatory=$true)][string]$NotebookName,
   [Parameter(Mandatory=$true)][string]$SectionName,
   [Parameter(Mandatory=$true)][string]$PageTitle,
-  [Parameter(Mandatory=$true)][string]$PageXmlPath
+  [Parameter(Mandatory=$true)][string]$PageXmlPath,
+  [switch]$BootstrapSourceState
 )
 $ErrorActionPreference = "Stop"
 $one = New-Object -ComObject OneNote.Application
@@ -1492,10 +1586,60 @@ $one.GetHierarchy($section.ID, 4, [ref]$sectionHierarchy)
 [xml]$sectionDoc = $sectionHierarchy
 $sectionNs = New-Object System.Xml.XmlNamespaceManager($sectionDoc.NameTable)
 $sectionNs.AddNamespace("one", $sectionDoc.DocumentElement.NamespaceURI)
+$pageXmlText = [System.IO.File]::ReadAllText($PageXmlPath, [System.Text.Encoding]::UTF8)
+[xml]$newPageDoc = $pageXmlText
+$newNs = New-Object System.Xml.XmlNamespaceManager($newPageDoc.NameTable)
+$newNs.AddNamespace("one", $newPageDoc.DocumentElement.NamespaceURI)
+
+function Get-TaskKey([string]$Text) {
+  if ([string]::IsNullOrWhiteSpace($Text)) { return "" }
+  # Ignore layout-only differences introduced by OCR or manual cleanup.
+  return ([regex]::Replace($Text.Trim().ToLowerInvariant(), "[\s,，、。．・]+", ""))
+}
+
+# Pull the newly generated task nodes out temporarily. They are appended again
+# only after every existing OneNote task, so an update never rewrites progress.
+$incomingTasks = @()
+$incomingNodes = @($newPageDoc.SelectNodes("//one:Outline//one:OE[one:Tag]", $newNs))
+foreach ($node in $incomingNodes) {
+  $textNode = $node.SelectSingleNode("./one:T", $newNs)
+  if ($null -ne $textNode -and -not [string]::IsNullOrWhiteSpace($textNode.InnerText)) {
+    $incomingTasks += [pscustomobject]@{
+      Text = $textNode.InnerText.Trim()
+      Completed = $false
+    }
+  }
+  [void]$node.ParentNode.RemoveChild($node)
+}
+
+# The existing OneNote list is the source of truth. Preserve its text, order,
+# and checked state exactly; only unseen incoming tasks are appended later.
+$existingTasks = @()
 $pageId = $null
 $deletedCount = 0
 foreach ($page in $sectionDoc.SelectNodes("//one:Page", $sectionNs)) {
   if ($page.name -eq $PageTitle) {
+    $existingPageText = ""
+    $one.GetPageContent($page.ID, [ref]$existingPageText, 2)
+    [xml]$existingPageDoc = $existingPageText
+    $existingNs = New-Object System.Xml.XmlNamespaceManager($existingPageDoc.NameTable)
+    $existingNs.AddNamespace("one", $existingPageDoc.DocumentElement.NamespaceURI)
+    $todoIndexes = @{}
+    foreach ($definition in $existingPageDoc.SelectNodes("//one:TagDef", $existingNs)) {
+      if ([string]$definition.name -match "^(To Do|Todo|タスク)") {
+        $todoIndexes[[string]$definition.index] = $true
+      }
+    }
+    foreach ($oe in $existingPageDoc.SelectNodes("//one:Outline//one:OE[one:Tag]", $existingNs)) {
+      $tag = $oe.SelectSingleNode("./one:Tag", $existingNs)
+      if (-not $todoIndexes.ContainsKey([string]$tag.index)) { continue }
+      $textNode = $oe.SelectSingleNode("./one:T", $existingNs)
+      if ($null -eq $textNode -or [string]::IsNullOrWhiteSpace($textNode.InnerText)) { continue }
+      $existingTasks += [pscustomobject]@{
+        Text = $textNode.InnerText.Trim()
+        Completed = (([string]$tag.completed).ToLowerInvariant() -eq "true")
+      }
+    }
     $one.DeleteHierarchy($page.ID)
     $deletedCount += 1
   }
@@ -1512,10 +1656,64 @@ if ($deletedCount -gt 0) {
   $action = "created"
 }
 
-$pageXml = [System.IO.File]::ReadAllText($PageXmlPath, [System.Text.Encoding]::UTF8)
+$effectiveIncomingTasks = $incomingTasks
+if ($BootstrapSourceState -and $existingTasks.Count -gt 0) {
+  # Existing OneNote text may contain user corrections that are more reliable
+  # than OCR/rawtext. On first state migration, keep OneNote untouched and only
+  # let Python record the already-seen source keys after this succeeds.
+  $effectiveIncomingTasks = @()
+}
+
+$combinedTasks = @()
+$seenTaskKeys = @{}
+foreach ($task in $existingTasks) {
+  $key = Get-TaskKey $task.Text
+  if ($key -and -not $seenTaskKeys.ContainsKey($key)) {
+    $seenTaskKeys[$key] = $true
+    $combinedTasks += $task
+  }
+}
+$appendedCount = 0
+foreach ($task in $effectiveIncomingTasks) {
+  $key = Get-TaskKey $task.Text
+  if ($key -and -not $seenTaskKeys.ContainsKey($key)) {
+    $seenTaskKeys[$key] = $true
+    $combinedTasks += $task
+    $appendedCount += 1
+  }
+}
+
+if ($combinedTasks.Count -gt 0) {
+  $tagDefinition = $newPageDoc.SelectSingleNode("//one:TagDef[@name='To Do']", $newNs)
+  if ($null -eq $tagDefinition) {
+    $tagDefinition = $newPageDoc.CreateElement("one", "TagDef", $newPageDoc.DocumentElement.NamespaceURI)
+    $tagDefinition.SetAttribute("index", "0")
+    $tagDefinition.SetAttribute("type", "0")
+    $tagDefinition.SetAttribute("symbol", "3")
+    $tagDefinition.SetAttribute("fontColor", "automatic")
+    $tagDefinition.SetAttribute("highlightColor", "none")
+    $tagDefinition.SetAttribute("name", "To Do")
+    $titleNode = $newPageDoc.SelectSingleNode("//one:Title", $newNs)
+    [void]$newPageDoc.DocumentElement.InsertBefore($tagDefinition, $titleNode)
+  }
+  $taskContainer = $newPageDoc.SelectSingleNode("//one:Outline/one:OEChildren", $newNs)
+  foreach ($task in $combinedTasks) {
+    $oe = $newPageDoc.CreateElement("one", "OE", $newPageDoc.DocumentElement.NamespaceURI)
+    $tag = $newPageDoc.CreateElement("one", "Tag", $newPageDoc.DocumentElement.NamespaceURI)
+    $tag.SetAttribute("index", "0")
+    $tag.SetAttribute("completed", $(if ($task.Completed) { "true" } else { "false" }))
+    [void]$oe.AppendChild($tag)
+    $text = $newPageDoc.CreateElement("one", "T", $newPageDoc.DocumentElement.NamespaceURI)
+    [void]$text.AppendChild($newPageDoc.CreateCDataSection([string]$task.Text))
+    [void]$oe.AppendChild($text)
+    [void]$taskContainer.AppendChild($oe)
+  }
+}
+
+$pageXml = $newPageDoc.OuterXml
 $pageXml = $pageXml.Replace("__PAGE_ID__", $pageId)
 $one.UpdatePageContent($pageXml)
-Write-Output "$action $pageId"
+Write-Output "$action $pageId existing_tasks=$($existingTasks.Count) incoming_tasks=$($incomingTasks.Count) appended_tasks=$appendedCount total_tasks=$($combinedTasks.Count) bootstrap=$BootstrapSourceState"
 """
 
     with tempfile.TemporaryDirectory(prefix="summarize_note5_onenote_") as tmp:
@@ -1524,8 +1722,7 @@ Write-Output "$action $pageId"
         xml_path = tmp_dir / "page.xml"
         ps_path.write_text(ps_script, encoding="utf-8")
         xml_path.write_text(page_xml, encoding="utf-8")
-        result = subprocess.run(
-            [
+        command = [
                 "powershell",
                 "-NoProfile",
                 "-ExecutionPolicy",
@@ -1540,7 +1737,11 @@ Write-Output "$action $pageId"
                 title,
                 "-PageXmlPath",
                 str(xml_path),
-            ],
+            ]
+        if bootstrap_source_state:
+            command.append("-BootstrapSourceState")
+        result = subprocess.run(
+            command,
             cwd=str(WORKSPACE_DIR),
             text=True,
             capture_output=True,
@@ -1549,6 +1750,10 @@ Write-Output "$action $pageId"
         )
 
     if result.returncode == 0:
+        page_state["seen_source_keys"] = updated_source_keys
+        page_state["initialized_from_onenote"] = bootstrap_source_state
+        page_state["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        save_onenote_todo_source_state(output_dir, todo_state)
         return True, result.stdout.strip()
 
     html_file = write_onenote_fallback_html(markdown_file, output_dir)
@@ -1564,6 +1769,7 @@ def run_onenote_command(
     output_dir: Path,
     section_name: str,
     current_output_file: Path | None,
+    todo_items: Iterable[str] = (),
 ) -> tuple[str, str]:
     markdown_file = current_output_file if current_output_file else find_latest_markdown(output_dir)
     if not markdown_file or not markdown_file.exists():
@@ -1577,7 +1783,12 @@ def run_onenote_command(
         return "failed", "markdown not found"
 
     try:
-        ok, detail = add_markdown_to_onenote(markdown_file, section_name, output_dir)
+        ok, detail = add_markdown_to_onenote(
+            markdown_file,
+            section_name,
+            output_dir,
+            todo_items=todo_items,
+        )
         if ok:
             append_markdown_log(
                 output_dir,
@@ -1787,6 +1998,7 @@ def execute_at_commands(
     current_output_file: Path | None = None,
     skip_ask: bool = False,
     manual_google_tasks: bool = False,
+    onenote_todo_items: Iterable[str] = (),
     depth: int = 0,
 ) -> tuple[dict, dict]:
     report = new_command_report()
@@ -1999,6 +2211,7 @@ def execute_at_commands(
                 output_dir=output_dir,
                 section_name=onenote_section,
                 current_output_file=current_output_file,
+                todo_items=onenote_todo_items,
             )
             report["onenote_status"] = onenote_status
             report["onenote_detail"] = onenote_detail
@@ -2028,6 +2241,7 @@ def execute_at_commands(
                     current_output_file=current_output_file,
                     skip_ask=skip_ask,
                     manual_google_tasks=manual_google_tasks,
+                    onenote_todo_items=onenote_todo_items,
                     depth=depth + 1,
                 )
                 merge_command_report(report, nested_report)
@@ -2441,6 +2655,7 @@ def summarize_once(args: argparse.Namespace, client: Anthropic, reason: str = "m
     )
 
     at_commands = parse_at_commands(command_target_note)
+    explicit_todo_items = extract_explicit_todo_items(command_target_note)
     manual_todo_items = extract_todo_candidates(command_target_note)
     for command in at_commands:
         if command["name"] == "todo":
@@ -2481,6 +2696,7 @@ def summarize_once(args: argparse.Namespace, client: Anthropic, reason: str = "m
             current_output_file=output_file,
             skip_ask=args.skip_ask,
             manual_google_tasks=args.manual_google_tasks,
+            onenote_todo_items=explicit_todo_items,
         )
         should_update_onenote = command_report.get("onenote_status") == "not_requested"
         if should_update_onenote:
@@ -2489,6 +2705,7 @@ def summarize_once(args: argparse.Namespace, client: Anthropic, reason: str = "m
                 output_dir=output_dir,
                 section_name=args.onenote_section,
                 current_output_file=output_file,
+                todo_items=explicit_todo_items,
             )
             command_report["onenote_status"] = onenote_status
             command_report["onenote_detail"] = onenote_detail

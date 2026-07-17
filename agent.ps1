@@ -6,6 +6,7 @@
     'journal',
     'journal-local',
     'journal-todos',
+    'journal-task-status',
     'commands',
     'orchestrator',
     'google-sync',
@@ -223,6 +224,17 @@ switch ($Action) {
       -Files "summarize_note5.py; $latestJournal; 日誌/GoogleTasks手動投入用.md" `
       -Verification '日誌実行コマンドが終了コード0で完了' `
       -NextSteps 'Google Tasksへは自動送信せず、手動投入用リストからユーザーが確認して貼り付ける'
+  }
+  'journal-task-status' {
+    Push-Location $Workspace
+    try {
+      & powershell -NoProfile -ExecutionPolicy Bypass -File '.\get_onenote_journal_tasks.ps1' @Rest
+      if ($LASTEXITCODE -ne 0) {
+        throw "Journal task-status command failed with exit code $LASTEXITCODE"
+      }
+    } finally {
+      Pop-Location
+    }
   }
   'commands' {
     Invoke-OrchestratorTask -Request ("rawtext内の@コマンドを実行する " + ($Rest -join ' '))
