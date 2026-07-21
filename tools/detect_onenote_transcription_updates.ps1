@@ -1,4 +1,4 @@
-﻿param(
+param(
   [Parameter(Mandatory=$true)][string]$PageTitle,
   [string]$SectionName = '',
   [switch]$CommitBaseline
@@ -42,8 +42,32 @@ try {
     '-Out', $relativePdf
   )
   if ($SectionName) { $exportArgs += @('-SectionName', $SectionName) }
-  & powershell @exportArgs
-  if ($LASTEXITCODE -ne 0) { throw "OneNote PDF export failed: $LASTEXITCODE" }
+  if ($PageTitle -match '^20\d{6}$') { $exportArgs += '-LatestForDate' }
+  $exportOutput = @(& powershell @exportArgs)
+  $exportExitCode = $LASTEXITCODE
+  $exportOutput | ForEach-Object { Write-Output $_ }
+  if ($exportExitCode -ne 0) { throw "OneNote PDF export failed: $exportExitCode" }
+
+  if ($PageTitle -match '^20\d{6}$') {
+    $resolvedTitleLine = @($exportOutput | Where-Object { [string]$_ -like 'ResolvedPageTitle=*' } | Select-Object -Last 1)
+    $resolvedIdLine = @($exportOutput | Where-Object { [string]$_ -like 'ResolvedPageId=*' } | Select-Object -Last 1)
+    $resolvedTitle = if ($resolvedTitleLine.Count) { ([string]$resolvedTitleLine[0]).Substring(18) } else { '' }
+    $resolvedId = if ($resolvedIdLine.Count) { ([string]$resolvedIdLine[0]).Substring(15) } else { '' }
+    if (-not [string]::IsNullOrWhiteSpace($resolvedId) -and $resolvedTitle -cne $PageTitle) {
+      $sourceHash = $sha = [System.Security.Cryptography.SHA256]::Create()
+      try {
+        $sourceHashBytes = $sha.ComputeHash(
+          [System.Text.Encoding]::UTF8.GetBytes("$PageTitle`n$resolvedId")
+        )
+      }
+      finally {
+        $sha.Dispose()
+      }
+      $sourceKey = ([System.BitConverter]::ToString($sourceHashBytes) -replace '-', '').Substring(0, 16).ToLowerInvariant()
+      $relativeStateDir = ".agent_runtime\transcription_state\$sourceKey"
+      $stateDir = Join-Path $root $relativeStateDir
+    }
+  }
 
   $diffArgs = @(
     '.\tools\onenote_page_update_diff.py',

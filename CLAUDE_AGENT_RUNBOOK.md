@@ -233,14 +233,19 @@ Do not infer completion from the Markdown file because checkbox state changes la
 
 ### OneNote handwritten-note transcription trigger
 
-`XXX、文字起こし` → transcribe the OneNote page titled exactly `XXX`:
+`XXX、文字起こし` → transcribe the **latest** synchronized state of the OneNote page `XXX`.
+A repeated request always captures the current latest state; never reuse an earlier PDF or transcription just because an output page already exists.
 
-1. Exact-title search across all notebooks (multiple matches → stop and ask).
-2. Export to PDF: `powershell -ExecutionPolicy Bypass -File .\tools\export_onenote_page_pdf.ps1 -PageTitle "XXX" -Out ".\tmp\pdfs\XXX_handwriting.pdf"`
-3. Render pages at 300 DPI, transcribe in reading order; unclear text → `［要確認］`.
-4. Save to `agent_workspace\OneNote検索Agent\XXX_手書き文字起こし.md`.
-5. Create a new page `XXX_手書き文字起こし` with `tools\create_onenote_text_page.ps1` (never edit the source page).
-6. Read back and verify; delete temp files; log to 命令したLog_Claude.
+1. For a non-date title, exact-title search across all notebooks (multiple matches → stop and ask).
+   For an eight-digit date `XXX`, compare the exact-date source page and every `XXX_手書き文字起こし…` page and pick the eligible one with the newest OneNote `lastModifiedTime`. An automation-created transcription page is registered under `.agent_runtime\transcription_outputs`, so an untouched output excludes itself; it becomes eligible again once the user edits it.
+2. Export to PDF. Non-date titles use exact-title selection; eight-digit dates add `-LatestForDate`:
+   `powershell -ExecutionPolicy Bypass -File .\tools\export_onenote_page_pdf.ps1 -PageTitle "XXX" -Out ".\tmp\pdfs\XXX_handwriting.pdf"` (append `-LatestForDate` for a date). Confirm `SyncRequested=True`, `ResolvedPageTitle`, `ResolvedPageId`, `PageLastModified`.
+3. Render pages at 300 DPI, transcribe printed text and handwriting in reading order; unclear text → `［要確認］`.
+   - Treat handwritten diagrams, reaction schemes, structural formulas, plots, meaningful tables, and equations as visual evidence — do not replace them with guessed prose. Crop each region from the 300 DPI render (keep labels/arrows/subscripts) into the transcription workspace.
+   - Put a marker on its own line at the matching point in reading order: `[[FIGURE:relative\path.png|desc]]` for diagrams/schemes, `[[EQUATION:relative\path.png|desc]]` for equations, `[[IMAGE:relative\path.png|desc]]` for ordinary photos.
+4. Save the UTF-8 transcription to `agent_workspace\OneNote検索Agent\XXX_手書き文字起こし.md`.
+5. Create a new page `XXX_手書き文字起こし` with `tools\create_onenote_text_page.ps1` (never edit the source page). That wrapper delegates to the hardened shared writer `tools\create_onenote_text_image_page.ps1`, which embeds FIGURE/EQUATION/IMAGE markers as real OneNote images in source order, reads back the created page's own XML (never rebuilds a `<one:Page>` from the ID alone), retries `UpdatePageContent` up to 5×, verifies title/text-lines/image-count/`VisualOrder`, and removes an empty page it created on failure. If the output title already exists, keep it and use the next suffix.
+6. Read back and verify title, non-empty line count, first/last line, image/figure/equation counts, and `VisualOrder`; confirm each visual stayed adjacent to its explanatory text; re-export once more, and if the source `PageLastModified` advanced repeat capture. Delete temp files; log to 命令したLog_Claude.
 
 `XXX、更新分だけ文字起こし` → run `tools\detect_onenote_transcription_updates.ps1 -PageTitle "XXX"`,
 transcribe only the changed-region images in `manifest.json`
