@@ -1,0 +1,9 @@
+# Research OS Requirements
+
+# Core dependencies
+PyYAML>=6.0       # YAML frontmatter parsing
+
+# Optional: Advanced features (9月以降)
+# numpy>=1.21
+# scikit-learn>=0.24  # For semantic search
+# chromadb>=0.3       # Vector database

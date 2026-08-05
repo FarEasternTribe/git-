@@ -30,3 +30,7 @@ summarize_paper/
 tools/orchestrator_agent_log.jsonl
 Experiment.pptx
 *.lnk
+
+# Research OS generated files
+research_tools/research_os.db
+research_tools/__pycache__/

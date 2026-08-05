@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Research OS Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            font-size: 36px;
+            font-weight: 700;
+            color: #2c3e50;
+        }
+
+        .time {
+            font-size: 18px;
+            color: #666;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .card-header {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #999;
+            font-weight: 600;
+            margin-bottom: 10px;
+            letter-spacing: 1px;
+        }
+
+        .card-value {
+            font-size: 42px;
+            font-weight: 700;
+            color: #0066cc;
+            margin-bottom: 8px;
+        }
+
+        .card-subtitle {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-good {
+            background-color: #22863a;
+        }
+
+        .status-warning {
+            background-color: #ff9800;
+        }
+
+        .status-alert {
+            background-color: #d73a49;
+        }
+
+        .priority-section {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #2c3e50;
+        }
+
+        .priority-item {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            border-left: 4px solid #0066cc;
+            background: #f9f9f9;
+            margin-bottom: 12px;
+            border-radius: 4px;
+        }
+
+        .priority-item.urgent {
+            border-left-color: #d73a49;
+        }
+
+        .priority-item.high {
+            border-left-color: #ff9800;
+        }
+
+        .priority-item.normal {
+            border-left-color: #0066cc;
+        }
+
+        .priority-item.low {
+            border-left-color: #999;
+        }
+
+        .priority-label {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 8px;
+            border-radius: 3px;
+            margin-right: 12px;
+            min-width: 60px;
+            text-align: center;
+        }
+
+        .urgent .priority-label {
+            background: #d73a49;
+            color: white;
+        }
+
+        .high .priority-label {
+            background: #ff9800;
+            color: white;
+        }
+
+        .normal .priority-label {
+            background: #0066cc;
+            color: white;
+        }
+
+        .low .priority-label {
+            background: #ccc;
+            color: white;
+        }
+
+        .progress-bar {
+            flex-grow: 1;
+            height: 4px;
+            background: #eee;
+            border-radius: 2px;
+            overflow: hidden;
+            margin: 0 12px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #22863a, #0066cc);
+            width: 65%;
+        }
+
+        .tag {
+            display: inline-block;
+            background: #f0f0f0;
+            color: #333;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            margin-right: 6px;
+            margin-top: 6px;
+        }
+
+        .in-progress {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .progress-item {
+            padding: 16px;
+            border: 1px solid #eee;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            background: #fafafa;
+        }
+
+        .progress-title {
+            font-weight: 600;
+            font-size: 14px;
+            margin-bottom: 6px;
+            color: #2c3e50;
+        }
+
+        .progress-meta {
+            font-size: 12px;
+            color: #999;
+        }
+
+        .status-badge {
+            display: inline-block;
+            background: #22863a;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            margin-left: 8px;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            color: #999;
+            font-size: 12px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            body {
+                background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+                color: #e0e0e0;
+            }
+
+            .card, .priority-section, .in-progress {
+                background: #2d2d2d;
+                color: #e0e0e0;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            }
+
+            h1 {
+                color: #e0e0e0;
+            }
+
+            .card-header {
+                color: #999;
+            }
+
+            .card-subtitle {
+                color: #aaa;
+            }
+
+            .priority-item {
+                background: #333;
+            }
+
+            .progress-item {
+                background: #333;
+                border-color: #444;
+            }
+
+            .progress-title {
+                color: #e0e0e0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div>
+                <h1>Research OS</h1>
+                <p style="margin-top: 4px; color: #999; font-size: 14px;">小島さん専用ダッシュボード</p>
+            </div>
+            <div class="time" id="current-time">2026-08-05 14:30</div>
+        </div>
+
+        <!-- Today's Status -->
+        <div class="grid">
+            <div class="card">
+                <div class="card-header">⚡ 睡眠時間</div>
+                <div class="card-value">5h 20m</div>
+                <div class="card-subtitle">
+                    <span class="status-indicator status-warning"></span>
+                    短時間（推奨: 7-8時間）
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">🏥 体調</div>
+                <div class="card-value">回復中</div>
+                <div class="card-subtitle">
+                    <span class="status-indicator status-warning"></span>
+                    帯状疱疹（8/4確定）
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">⚙️ 集中可能時間</div>
+                <div class="card-value">短時間</div>
+                <div class="card-subtitle">
+                    <span class="status-indicator status-warning"></span>
+                    短期スプリント推奨
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">📊 データベース</div>
+                <div class="card-value">357</div>
+                <div class="card-subtitle">インデックス済みノート</div>
+            </div>
+        </div>
+
+        <!-- Priority Items -->
+        <div class="priority-section">
+            <div class="section-title">🎯 優先事項</div>
+
+            <div class="priority-item urgent">
+                <div class="priority-label">🔴 緊急</div>
+                <div style="flex-grow: 1;">
+                    <strong>AFM測定（進行中）</strong>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                        Tip交換完了。現在測定中。本日中に完了予定。
+                    </div>
+                </div>
+            </div>
+
+            <div class="priority-item high">
+                <div class="priority-label">🟠 高優先度</div>
+                <div style="flex-grow: 1;">
+                    <strong>授業レポート採点</strong>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                        1日以内に完了必須。
+                    </div>
+                </div>
+            </div>
+
+            <div class="priority-item normal">
+                <div class="priority-label">🔵 通常</div>
+                <div style="flex-grow: 1;">
+                    <strong>次の合成ステップ計画</strong>
+                    <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                        今週は無理をしない方向で。来週以降に本格化。
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- In Progress -->
+        <div class="in-progress">
+            <div class="section-title">⚙️ 進行中</div>
+
+            <div class="progress-item">
+                <div class="progress-title">
+                    Scholl反応（nKJM###）
+                    <span class="status-badge">進行中</span>
+                </div>
+                <div class="progress-meta">
+                    開始: 2026-08-04 | 予定: 2026-08-08
+                </div>
+                <div style="margin-top: 8px;">
+                    <span class="tag">#synthesis</span>
+                    <span class="tag">#gnr</span>
+                    <span class="tag">#in-progress</span>
+                </div>
+            </div>
+
+            <div class="progress-item">
+                <div class="progress-title">
+                    科研費再申請
+                    <span class="status-badge" style="background: #ff9800;">準備中</span>
+                </div>
+                <div class="progress-meta">
+                    進捗: 60% | 期限: 2026-09-30
+                </div>
+                <div style="margin-top: 8px;">
+                    <span class="tag">#admin</span>
+                    <span class="tag">#high</span>
+                </div>
+            </div>
+
+            <div class="progress-item">
+                <div class="progress-title">
+                    Research OS開発
+                    <span class="status-badge" style="background: #22863a;">実装中</span>
+                </div>
+                <div class="progress-meta">
+                    Stage: 3/4 | 予定: 本週完成
+                </div>
+                <div style="margin-top: 8px;">
+                    <span class="tag">#project</span>
+                    <span class="tag">#research-tools</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Today's Summary -->
+        <div class="priority-section" style="margin-top: 30px;">
+            <div class="section-title">📋 本日のまとめ</div>
+            <div style="line-height: 1.8; color: #666; font-size: 14px;">
+                <p>✅ <strong>完了:</strong> AFM測定（Tip交換）、Si etching</p>
+                <p>🔄 <strong>進行中:</strong> Scholl反応、Research OS構築（Stage 3/4）</p>
+                <p>📅 <strong>予定:</strong> レポート採点、次のステップ計画検討</p>
+                <p style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee; color: #999;">
+                    💡 <strong>今週の方針:</strong> 体力優先で無理なく進める。研究の継続性を重視。
+                </p>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p>Research OS Dashboard | 最終更新: 2026-08-05 14:30</p>
+            <p>Obsidian Vault (357 files) + SQLite Search Engine + Auto-Classifier</p>
+        </div>
+    </div>
+
+    <script>
+        // リアルタイム時間更新
+        function updateTime() {
+            const now = new Date();
+            const date = now.toISOString().split('T')[0];
+            const time = now.toTimeString().split(' ')[0];
+            document.getElementById('current-time').textContent = `${date} ${time}`;
+        }
+        setInterval(updateTime, 1000);
+    </script>
+</body>
+</html>
