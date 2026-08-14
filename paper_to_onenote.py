@@ -206,6 +206,13 @@ def main() -> None:
         print("1. 開いたHTMLページで本文を選択してコピー")
         print("2. OneNoteまたはNotionの新しいページに貼り付け")
         print("3. ページタイトルにはHTML上部の論文タイトルを使ってください")
+        print("")
+        print("【ルール】論文要約をOneNoteに貼ったら、元PDFも必ず同じノートに添付すること。")
+        print("  この手動フローはPDFを添付しません。貼り付け後に必ず次を実行してください:")
+        print("    powershell -ExecutionPolicy Bypass -File .\\tools\\attach_paper_pdfs_to_onenote.ps1 -Apply")
+        print("  （ページタイトルがライブラリ索引のTitleと一致すればPDFが自動添付されます。)")
+        print("  要約＋PDF添付までCOMで自動完結させたい場合は、この手動フローではなく")
+        print("    python .\\tools\\add_paper_summaries_to_onenote.py --all-with-summary  を使う（推奨）。")
     except Exception as exc:
         print(f"エラー: {exc}", file=sys.stderr)
         raise

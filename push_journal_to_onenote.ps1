@@ -31,18 +31,30 @@ try {
   [xml]$hierarchy = ''
   $one.GetHierarchy('', 4, [ref]$hierarchy)
 
-  $notebook = @($hierarchy.DocumentElement.SelectNodes('//*[local-name()="Notebook"]') | Where-Object {
+  $notebook = $hierarchy.DocumentElement.SelectNodes('//*[local-name()="Notebook"]') | Where-Object {
     $_.name -eq $NotebookName
-  } | Select-Object -First 1)
+  } | Select-Object -First 1
   if ($null -eq $notebook) {
     throw "Notebook not found: $NotebookName"
   }
 
-  $section = @($notebook.SelectNodes('.//*[local-name()="Section"]') | Where-Object {
-    $_.name -eq $SectionName
-  } | Select-Object -First 1)
+  $section = $notebook.SelectNodes('.//*[local-name()="Section"]') | Where-Object {
+    $_.name -eq $SectionName -and $_.isInRecycleBin -ne 'true'
+  } | Select-Object -First 1
   if ($null -eq $section) {
-    throw "Section not found: $NotebookName / $SectionName"
+    # セクションが別ノートブックへ移動された場合に追従する(2026-07-18: 日誌がFarEasternTribeへ移動)。
+    $section = $hierarchy.DocumentElement.SelectNodes('//*[local-name()="Section"]') | Where-Object {
+      $_.name -eq $SectionName -and $_.isInRecycleBin -ne 'true'
+    } | Select-Object -First 1
+    if ($null -eq $section) {
+      throw "Section not found in any notebook: $SectionName"
+    }
+    $ownerNotebook = $section.ParentNode
+    while ($ownerNotebook.LocalName -ne 'Notebook' -and $ownerNotebook.ParentNode) {
+      $ownerNotebook = $ownerNotebook.ParentNode
+    }
+    $NotebookName = $ownerNotebook.name
+    Write-Warning "Section '$SectionName' not in requested notebook; using notebook '$NotebookName' instead."
   }
 
   $pageId = ''

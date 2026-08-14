@@ -34,3 +34,6 @@ Experiment.pptx
 # Research OS generated files
 research_tools/research_os.db
 research_tools/__pycache__/
+
+# Scratch output (rendered diary page images / PDFs — private content)
+tmp/

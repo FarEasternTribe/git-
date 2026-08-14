@@ -1,0 +1,2284 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Research OS Dashboard - Full Sync Edition</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            font-size: 36px;
+            font-weight: 700;
+            color: #2c3e50;
+        }
+
+        .sync-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #22863a;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .sync-dot {
+            width: 8px;
+            height: 8px;
+            background: white;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* --- Obsidian Vault 連携バー --- */
+        .vault-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 10px 16px;
+            margin-bottom: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            font-size: 13px;
+        }
+
+        .vault-bar button {
+            flex: none;
+            padding: 6px 14px;
+            font-size: 12px;
+        }
+
+        .vault-bar-desc {
+            font-size: 11px;
+            color: #999;
+            margin-top: 2px;
+        }
+
+        .main-grid {
+            display: grid;
+            /* ポモドーロ列だけ他の半分の幅にする */
+            grid-template-columns: 0.5fr 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        @media (max-width: 1100px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .section {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #2c3e50;
+        }
+
+        .timer-display {
+            text-align: center;
+            padding: 40px;
+            background: linear-gradient(135deg, #ff9800 0%, #ff6b00 100%);
+            border-radius: 12px;
+            margin-bottom: 20px;
+            color: white;
+        }
+
+        .timer-text {
+            font-size: 72px;
+            font-weight: 700;
+            font-family: 'Courier New', monospace;
+            margin-bottom: 10px;
+        }
+
+        .timer-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        /* --- 半分幅のポモドーロ列に収まるようサイズを詰める --- */
+        /* min-width:0 がないと中身の最小幅に押し負けて 0.5fr が効かない */
+        .pomodoro {
+            min-width: 0;
+        }
+
+        .pomodoro .preset-btn {
+            padding: 10px 4px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .pomodoro .timer-display {
+            padding: 22px 12px;
+        }
+
+        .pomodoro .timer-text {
+            font-size: 44px;
+            margin-bottom: 6px;
+        }
+
+        .pomodoro .timer-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .pomodoro .timer-controls button {
+            padding: 9px 6px;
+            font-size: 13px;
+        }
+
+        .pomodoro .timer-controls button:first-child {
+            grid-column: 1 / -1;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 14px;
+            flex: 1;
+        }
+
+        button:hover {
+            background: #0052a3;
+        }
+
+        button.secondary {
+            background: #666;
+        }
+
+        button:disabled {
+            opacity: 0.35;
+            cursor: default;
+        }
+
+        button:disabled:hover {
+            background: inherit;
+        }
+
+        .preset-btn {
+            padding: 10px 12px;
+            background: #f0f0f0;
+            color: #333;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+            flex: none;
+        }
+
+        .preset-btn:hover {
+            background: #e0e0e0;
+            border-color: #999;
+        }
+
+        .preset-btn.active {
+            background: #ff9800;
+            color: white;
+            border-color: #ff9800;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #333;
+        }
+
+        input[type="text"],
+        select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 14px;
+        }
+
+        input:focus,
+        select:focus {
+            outline: none;
+            border-color: #ff9800;
+            box-shadow: 0 0 0 3px rgba(255, 152, 0, 0.1);
+        }
+
+        /* --- 日付ナビゲーション --- */
+        .date-nav {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 6px 8px;
+            margin-bottom: 10px;
+            background: #f4f6f8;
+            border: 1px solid #e2e6ea;
+            border-radius: 6px;
+        }
+
+        .date-nav button {
+            flex: none;
+            padding: 4px 10px;
+            font-size: 13px;
+            background: #fff;
+            color: #444;
+            border: 1px solid #d6dbe0;
+            border-radius: 4px;
+            font-weight: 700;
+        }
+
+        .date-nav button:hover:not(:disabled) {
+            background: #e9edf1;
+        }
+
+        .date-nav-label {
+            flex: 1;
+            text-align: center;
+            font-size: 13px;
+            font-weight: 700;
+            color: #333;
+        }
+
+        .date-nav-today {
+            font-size: 11px;
+            font-weight: 600;
+            color: #22863a;
+            margin-left: 6px;
+        }
+
+        /* --- 未保存のお知らせ --- */
+        .pending-banner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 10px 12px;
+            margin-bottom: 12px;
+            background: #fff8e5;
+            border: 1px solid #f0d68a;
+            border-left: 4px solid #ff9800;
+            border-radius: 6px;
+            font-size: 12px;
+            color: #6b5411;
+        }
+
+        .pending-banner button {
+            flex: none;
+            padding: 6px 12px;
+            font-size: 12px;
+            background: #ff9800;
+        }
+
+        .pending-banner button:hover {
+            background: #e88a00;
+        }
+
+        .pending-banner .dismiss {
+            background: transparent;
+            color: #8a7433;
+            padding: 6px 8px;
+            font-weight: 700;
+        }
+
+        .pending-banner .dismiss:hover {
+            background: rgba(0, 0, 0, 0.06);
+        }
+
+        /* --- タブ（リスト / Markdown） --- */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            border-bottom: 2px solid #e5e5e5;
+            margin-bottom: 12px;
+        }
+
+        .tab-btn {
+            flex: none;
+            padding: 8px 16px;
+            background: transparent;
+            color: #888;
+            border: none;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            border-radius: 0;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .tab-btn:hover {
+            background: transparent;
+            color: #555;
+        }
+
+        .tab-btn.active {
+            color: #ff9800;
+            border-bottom-color: #ff9800;
+        }
+
+        .md-preview {
+            margin: 0;
+            max-height: 200px;
+            overflow: auto;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 12px;
+            background: #fafafa;
+            font-family: 'Courier New', ui-monospace, monospace;
+            font-size: 12px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #333;
+        }
+
+        .history-item {
+            padding: 12px;
+            border-left: 4px solid #ff9800;
+            background: #f9f9f9;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .task-item {
+            /* 10件以上を一覧できるよう高さを詰めている */
+            padding: 8px 10px;
+            border-left: 4px solid #0066cc;
+            background: #f9f9f9;
+            margin-bottom: 6px;
+            border-radius: 4px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* タスク一覧: 最低10件が見えるだけの高さを確保する */
+        #task-history {
+            max-height: 500px;
+        }
+
+        /* 優先順位（並び順）を表す通し番号 */
+        .task-rank {
+            flex: none;
+            min-width: 18px;
+            text-align: right;
+            font-size: 11px;
+            font-weight: 700;
+            color: #aaa;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .task-item:first-child .task-rank {
+            color: #d73a49;
+        }
+
+        /* ドラッグ＆ドロップで優先順位を入れ替える
+           掴めるのは右端のグリップだけ。文字やチェックボックスの操作を邪魔しない */
+        .task-grip {
+            flex: none;
+            margin-left: 2px;
+            padding: 6px 4px;
+            color: #bbb;
+            font-size: 15px;
+            line-height: 1;
+            letter-spacing: -1px;
+            user-select: none;
+            cursor: grab;
+            border-radius: 4px;
+        }
+
+        .task-grip:hover {
+            color: #777;
+            background: rgba(0, 0, 0, 0.06);
+        }
+
+        .task-grip:active {
+            cursor: grabbing;
+        }
+
+        .task-item.dragging {
+            opacity: 0.4;
+        }
+
+        /* 挿入位置の線（border だとレイアウトがずれるので inset shadow で描く） */
+        .task-item.drop-above {
+            box-shadow: inset 0 3px 0 0 #0066cc;
+        }
+
+        .task-item.drop-below {
+            box-shadow: inset 0 -3px 0 0 #0066cc;
+        }
+
+
+        .task-item.completed {
+            opacity: 0.6;
+        }
+
+        .task-item.completed .task-text {
+            text-decoration: line-through;
+            color: #999;
+        }
+
+        .task-checkbox {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            accent-color: #0066cc;
+        }
+
+        .task-text {
+            flex: 1;
+            word-break: break-word;
+        }
+
+        .history-time {
+            color: #999;
+            font-size: 11px;
+            margin-bottom: 4px;
+        }
+
+        .history-sync-badge {
+            display: inline-block;
+            background: #22863a;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            margin-top: 4px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #0066cc;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #0066cc;
+            margin-bottom: 4px;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #999;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            body {
+                background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+                color: #e0e0e0;
+            }
+
+            .section {
+                background: #2d2d2d;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            }
+
+            h1 { color: #e0e0e0; }
+            label { color: #e0e0e0; }
+
+            input, select {
+                background: #333;
+                color: #e0e0e0;
+                border-color: #444;
+            }
+
+            .history-item { background: #333; border-left-color: #ff9800; }
+            .task-item { background: #333; border-left-color: #0066cc; }
+            .task-item.completed .task-text { color: #777; }
+            .stat-card { background: #333; }
+
+            .date-nav { background: #333; border-color: #444; }
+            .date-nav button { background: #3a3a3a; color: #ddd; border-color: #4a4a4a; }
+            .date-nav button:hover:not(:disabled) { background: #464646; }
+            .date-nav-label { color: #e0e0e0; }
+            .date-nav-today { color: #56d364; }
+
+            .pending-banner { background: #3a3223; border-color: #6b5a2e; color: #e8d9a8; }
+            .pending-banner .dismiss { color: #c9b784; }
+
+            .task-grip { color: #666; }
+            .task-rank { color: #777; }
+            .task-item:first-child .task-rank { color: #ff7b72; }
+
+            .tabs { border-bottom-color: #444; }
+            .tab-btn { color: #999; }
+            .tab-btn:hover { color: #ccc; }
+            .tab-btn.active { color: #ff9800; }
+            .md-preview { background: #262626; border-color: #444; color: #ddd; }
+
+            .vault-bar { background: #2d2d2d; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div>
+                <h1>Research OS</h1>
+                <p style="margin-top: 4px; color: #999; font-size: 14px;">Focus Desk + Obsidian 連携</p>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <button id="device-name-badge" onclick="renameDevice()" title="クリックしてこの端末の名前を変更"
+                        style="background: #555; padding: 8px 16px; border-radius: 20px; font-size: 12px; flex: none;">
+                    🖥️ 未設定
+                </button>
+                <div class="sync-badge">
+                    <div class="sync-dot"></div>
+                    <span id="sync-text">自動保存 ON</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Obsidian Vault 連携 -->
+        <div class="vault-bar">
+            <div>
+                <strong>🔗 Obsidian Vault連携</strong>
+                <span id="vault-status" style="margin-left: 8px; font-weight: 600; color: #999;">未接続</span>
+                <div class="vault-bar-desc">
+                    接続すると「外部脳」フォルダを直接読み書きします（過去メモ・本日のタスクが別PCの内容も含めて見えます）。
+                </div>
+            </div>
+            <button id="vault-connect-btn" onclick="onVaultButtonClick()">接続</button>
+        </div>
+
+        <!-- Main Grid: Timer + Memo -->
+        <div class="main-grid">
+            <!-- Pomodoro -->
+            <div class="section pomodoro">
+                <div class="section-title">🍅 ポモドーロ</div>
+
+                <div class="timer-display">
+                    <div class="timer-text" id="timer-display">25:00</div>
+                    <div style="font-size: 14px;" id="timer-mode">集中時間</div>
+                </div>
+
+                <div class="timer-controls">
+                    <button onclick="startTimer()">開始</button>
+                    <button class="secondary" onclick="pauseTimer()">一時停止</button>
+                    <button class="secondary" onclick="resetTimer()">リセット</button>
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; font-size: 12px; margin-bottom: 8px; font-weight: 600;">集中時間</label>
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
+                        <button class="preset-btn" data-preset="focus-10" onclick="setTimer(10, 'focus-10')">10分</button>
+                        <button class="preset-btn" data-preset="focus-15" onclick="setTimer(15, 'focus-15')">15分</button>
+                        <button class="preset-btn" data-preset="focus-20" onclick="setTimer(20, 'focus-20')">20分</button>
+                        <button class="preset-btn active" data-preset="focus-25" onclick="setTimer(25, 'focus-25')">25分</button>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; font-size: 12px; margin-bottom: 8px; font-weight: 600;">休憩時間</label>
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
+                        <button class="preset-btn" data-preset="break-5" onclick="setTimer(5, 'break-5')">5分休憩</button>
+                        <button class="preset-btn" data-preset="break-10" onclick="setTimer(10, 'break-10')">10分休憩</button>
+                    </div>
+                </div>
+
+                <div style="text-align: center; padding: 16px; background: #f9f9f9; border-radius: 6px;">
+                    <div style="font-size: 24px; font-weight: 700; color: #ff9800;" id="session-count">0</div>
+                    <div style="font-size: 12px; color: #999;">本日のセッション完了</div>
+                </div>
+            </div>
+
+            <!-- Memo with Auto-Sync -->
+            <div class="section">
+                <div class="section-title">📝 即時メモ（自動Obsidian同期）</div>
+
+                <div class="form-group">
+                    <label for="memo-text">メモ内容</label>
+                    <input type="text" id="memo-text" placeholder="思いついたことを入力。Enterで保存。">
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px;">
+                    <div class="form-group">
+                        <label for="memo-category">カテゴリー</label>
+                        <select id="memo-category">
+                            <option value="default">その他</option>
+                            <option value="experiment">実験</option>
+                            <option value="idea">アイデア</option>
+                            <option value="meeting">ミーティング</option>
+                            <option value="health">体調</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="memo-tags">タグ</label>
+                        <input type="text" id="memo-tags" placeholder="#synthesis #gnr">
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+                    <button onclick="saveToTimeMemo()" style="flex: 1; background: #0066cc;">
+                        11-TimeMemo
+                    </button>
+                    <button onclick="exportForPowerShell()" style="flex: 1; background: #666; font-size: 12px;">
+                        ↓ エクスポート
+                    </button>
+                </div>
+
+                <div id="memo-pending-banner" class="pending-banner" style="display: none;"></div>
+
+                <div class="date-nav">
+                    <button onclick="shiftViewDate(-1)" title="前の日">◀</button>
+                    <div class="date-nav-label" id="memo-date-label">--</div>
+                    <button id="memo-date-next" onclick="shiftViewDate(1)" title="次の日">▶</button>
+                    <button id="memo-date-today" onclick="goToToday()" title="今日に戻る">今日</button>
+                </div>
+
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="list" onclick="switchMemoTab('list')">リスト</button>
+                    <button class="tab-btn" data-tab="md" onclick="switchMemoTab('md')">Markdown</button>
+                </div>
+
+                <div id="memo-tab-list">
+                    <div id="memo-history" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; padding: 12px;">
+                        <div style="color: #999; font-size: 12px; padding: 20px; text-align: center;">
+                            メモを記録するとここに表示されます
+                        </div>
+                    </div>
+                </div>
+
+                <div id="memo-tab-md" style="display: none;">
+                    <pre id="memo-md-text" class="md-preview">本日のメモがありません</pre>
+                    <button onclick="copyMarkdown()" style="margin-top: 10px; background: #666; font-size: 12px;">
+                        Markdown をコピー
+                    </button>
+                    <div style="font-size: 11px; color: #999; margin-top: 6px;">
+                        「11-TimeMemo」ボタンで Obsidian に保存される内容そのものです。
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tasks -->
+            <div class="section">
+                <div class="section-title">✅ タスクリスト</div>
+
+                <div id="task-pending-banner" class="pending-banner" style="display: none;"></div>
+
+                <div id="task-editor-controls">
+                    <div class="form-group">
+                        <label for="task-text">新しいタスク</label>
+                        <input type="text" id="task-text" placeholder="やることを入力。Enterで追加。">
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px;">
+                        <button onclick="saveToTaskList()" style="background: #0066cc; grid-column: 1 / -1;">
+                            Obsidianに保存
+                        </button>
+                        <button onclick="clearCompletedTasks()" style="background: #666; font-size: 12px;">
+                            完了を削除
+                        </button>
+                        <button onclick="clearAllTasks()" style="background: #d73a49; font-size: 12px;">
+                            すべて消去
+                        </button>
+                        <button id="task-undo-btn" onclick="undoTaskChange()" disabled
+                                style="background: #22863a; font-size: 12px;">
+                            元に戻す
+                        </button>
+                        <button onclick="refreshTasksFromVault()" style="background: #666; font-size: 12px;">
+                            Vaultから読込
+                        </button>
+                    </div>
+                </div>
+
+                <div class="date-nav">
+                    <button onclick="shiftTaskViewDate(-1)" title="前の日">◀</button>
+                    <div class="date-nav-label" id="task-date-label">--</div>
+                    <button id="task-date-next" onclick="shiftTaskViewDate(1)" title="次の日">▶</button>
+                    <button id="task-date-today" onclick="goToTodayTasks()" title="今日に戻る">今日</button>
+                </div>
+
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 6px;">
+                    <label id="task-list-label" style="margin: 0;">タスク一覧</label>
+                    <label style="display: flex; align-items: center; gap: 6px; margin: 0; font-weight: 600; cursor: pointer; white-space: nowrap;">
+                        <input type="checkbox" id="show-completed" checked
+                               onchange="toggleShowCompleted()"
+                               style="width: auto; cursor: pointer; accent-color: #0066cc;">
+                        完了を表示
+                    </label>
+                </div>
+                <div id="task-history" style="overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; padding: 12px;">
+                    <div style="color: #999; font-size: 12px; padding: 20px; text-align: center;">
+                        タスクを追加するとここに表示されます
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value" id="memo-stat">0</div>
+                <div class="stat-label">本日のメモ</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="focus-stat">0</div>
+                <div class="stat-label">ポモ完了</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="sync-count">0</div>
+                <div class="stat-label">同期完了</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="task-stat">0</div>
+                <div class="stat-label">タスク総数</div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div style="text-align: center; margin-top: 40px; color: #999; font-size: 12px;">
+            <p>Research OS Dashboard | Obsidian Vault 連携</p>
+            <p>入力は LocalStorage に自動保存。Vault接続時は直接ファイルへ、未接続時はURIで書き出し。</p>
+            <p id="last-sync">最終 Obsidian 保存: --:--</p>
+            <p>
+                <span id="app-version-label">v?.?.?</span>
+                ・<button onclick="toggleChangelog()" style="background: none; border: none; color: #0066cc; text-decoration: underline; cursor: pointer; font-size: 12px; padding: 0; flex: none; display: inline;">更新履歴を見る</button>
+            </p>
+            <div id="changelog-panel" class="md-preview" style="display: none; text-align: left; max-width: 600px; margin: 10px auto 0;"></div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+        // バージョン・更新履歴（新しいものが先頭）
+        // ============================================================
+        const APP_VERSION = '1.3.0';
+        const CHANGELOG = [
+            { version: '1.3.0', date: '2026-08-06', notes: 'Obsidian Vaultとの直接読み書き（File System Access API）、端末名ラベル、バージョン表示/更新履歴を追加' },
+            { version: '1.2.0', date: '2026-08-06', notes: 'タスクリストをObsidian保存に対応（12-TaskList）、ドラッグ並べ替え・元に戻す・完了の片付けを追加' },
+            { version: '1.1.0', date: '2026-08-05', notes: 'タスクリスト機能（チェックボックス・優先順位）を追加' },
+            { version: '1.0.0', date: '2026-08-05', notes: 'ポモドーロ・即時メモ・11-TimeMemo連携の初版' }
+        ];
+
+        function toggleChangelog() {
+            const panel = document.getElementById('changelog-panel');
+            if (!panel) return;
+            if (panel.style.display === 'none') {
+                panel.innerHTML = CHANGELOG.map(c =>
+                    `<div style="margin-bottom: 8px;"><strong>v${escapeHtml(c.version)}</strong>（${escapeHtml(c.date)}）— ${escapeHtml(c.notes)}</div>`
+                ).join('');
+                panel.style.display = 'block';
+            } else {
+                panel.style.display = 'none';
+            }
+        }
+
+        // ============================================================
+        // 端末名（Desktop / Lenovo など）
+        // 初回のメモ・タスク作成時に一度だけ尋ね、以後 LocalStorage に保持する。
+        // Vaultへ保存する行の末尾に [端末名] として埋め込み、読み込み側で
+        // 「どちらのPCで追加したか」を表示できるようにする。
+        // ============================================================
+        function getDeviceName() {
+            let name = localStorage.getItem('research_os_device_name');
+            if (!name) {
+                name = prompt('この端末の名前を入力してください（例: Desktop, Lenovo）\nメモ・タスクにラベルとして表示されます。', 'Desktop');
+                name = (name || '').trim() || 'この端末';
+                localStorage.setItem('research_os_device_name', name);
+                updateDeviceBadge();
+            }
+            return name;
+        }
+
+        function renameDevice() {
+            const current = localStorage.getItem('research_os_device_name') || '';
+            const name = prompt('この端末の名前を変更', current);
+            if (name && name.trim()) {
+                localStorage.setItem('research_os_device_name', name.trim());
+                updateDeviceBadge();
+                renderMemos();
+                renderTasks();
+            }
+        }
+
+        function updateDeviceBadge() {
+            const el = document.getElementById('device-name-badge');
+            if (!el) return;
+            const name = localStorage.getItem('research_os_device_name');
+            el.textContent = `🖥️ ${name || '未設定（クリックして設定）'}`;
+        }
+
+        // 端末名ごとに安定した色を割り当てる（見た目で見分けられれば十分なので簡易ハッシュ）
+        function deviceColor(name) {
+            if (!name) return '#999';
+            let hash = 0;
+            for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+            const hues = [205, 265, 325, 25, 145, 85];
+            return `hsl(${hues[hash % hues.length]}, 55%, 42%)`;
+        }
+
+        function deviceBadgeHtml(name) {
+            if (!name) return '';
+            return `<span style="background: ${deviceColor(name)}; color: white; font-size: 10px; padding: 2px 7px; border-radius: 8px; margin-left: 6px; white-space: nowrap;">${escapeHtml(name)}</span>`;
+        }
+
+        // カテゴリー値 → 表示ラベル
+        const CATEGORY_LABELS = {
+            default: '',
+            experiment: '実験',
+            idea: 'アイデア',
+            meeting: 'ミーティング',
+            health: '体調'
+        };
+
+        // HTML特殊文字のエスケープ（メモに < & などが入っても表示が崩れないように）
+        function escapeHtml(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, (c) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            })[c]);
+        }
+
+        // ============================================================
+        // Obsidian Vault 連携（File System Access API）
+        // 「外部脳」フォルダへのハンドルを取得し、11-TimeMemo / 12-TaskList を
+        // 直接読み書きする。ブラウザ標準機能のみで課金・追加サーバー不要。
+        // ============================================================
+        let vaultHandle = null;
+        let vaultState = 'disconnected'; // disconnected | unsupported | needs-permission | denied | connected
+
+        function isFsApiSupported() {
+            return typeof window.showDirectoryPicker === 'function';
+        }
+
+        // ハンドル自体は FileSystemHandle として構造化複製可能なので IndexedDB にそのまま保存できる
+        const VAULT_DB_NAME = 'ResearchOSVault';
+        const VAULT_STORE = 'handles';
+
+        function openVaultDB() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open(VAULT_DB_NAME, 1);
+                req.onupgradeneeded = (e) => {
+                    const idb = e.target.result;
+                    if (!idb.objectStoreNames.contains(VAULT_STORE)) {
+                        idb.createObjectStore(VAULT_STORE);
+                    }
+                };
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        }
+
+        async function idbSetHandle(key, handle) {
+            const idb = await openVaultDB();
+            return new Promise((resolve, reject) => {
+                const tx = idb.transaction(VAULT_STORE, 'readwrite');
+                tx.objectStore(VAULT_STORE).put(handle, key);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        }
+
+        async function idbGetHandle(key) {
+            const idb = await openVaultDB();
+            return new Promise((resolve, reject) => {
+                const tx = idb.transaction(VAULT_STORE, 'readonly');
+                const req = tx.objectStore(VAULT_STORE).get(key);
+                req.onsuccess = () => resolve(req.result || null);
+                req.onerror = () => reject(req.error);
+            });
+        }
+
+        function updateVaultStatus(state) {
+            vaultState = state;
+            const badge = document.getElementById('vault-status');
+            const btn = document.getElementById('vault-connect-btn');
+            if (!badge) return;
+
+            const labels = {
+                unsupported: ['非対応（Chrome/Edgeで開いてください）', '#d73a49'],
+                disconnected: ['未接続', '#999'],
+                'needs-permission': ['再接続が必要', '#ff9800'],
+                denied: ['許可されませんでした', '#d73a49'],
+                connected: ['接続済み', '#22863a']
+            };
+            const [label, color] = labels[state] || labels.disconnected;
+            badge.textContent = label;
+            badge.style.color = color;
+
+            if (btn) {
+                btn.textContent = state === 'connected' ? '選び直す'
+                    : state === 'needs-permission' ? '許可を再取得'
+                    : '接続';
+                btn.disabled = state === 'unsupported';
+            }
+        }
+
+        async function loadAllFromVault() {
+            await loadMemosFromVaultForDate(viewDate || todayStamp());
+            await loadTasksFromVaultForToday();
+            renderMemos();
+            await renderTaskDateView();
+        }
+
+        async function connectVault() {
+            if (!isFsApiSupported()) {
+                alert('このブラウザは File System Access API に対応していません。Chrome または Edge をお使いください。');
+                return;
+            }
+            try {
+                const handle = await window.showDirectoryPicker({ id: 'research-os-vault', mode: 'readwrite' });
+                await idbSetHandle('vaultDir', handle);
+                vaultHandle = handle;
+                updateVaultStatus('connected');
+                await loadAllFromVault();
+            } catch (e) {
+                if (e.name !== 'AbortError') {
+                    alert('Vaultへの接続に失敗しました: ' + e.message);
+                }
+            }
+        }
+
+        async function reconnectVaultPermission() {
+            if (!vaultHandle) return connectVault();
+            try {
+                const perm = await vaultHandle.requestPermission({ mode: 'readwrite' });
+                if (perm === 'granted') {
+                    updateVaultStatus('connected');
+                    await loadAllFromVault();
+                } else {
+                    updateVaultStatus('denied');
+                }
+            } catch (e) {
+                alert('許可の再取得に失敗しました: ' + e.message);
+            }
+        }
+
+        function onVaultButtonClick() {
+            if (vaultState === 'needs-permission') {
+                reconnectVaultPermission();
+            } else {
+                connectVault();
+            }
+        }
+
+        // ページを開いた時に、以前選んだフォルダへの許可が生きているか確認する
+        // （requestPermission はユーザー操作なしでは呼べないため、生きていなければ
+        // 「許可を再取得」ボタンを出すだけに留める）
+        async function restoreVaultHandle() {
+            if (!isFsApiSupported()) {
+                updateVaultStatus('unsupported');
+                return;
+            }
+            try {
+                const handle = await idbGetHandle('vaultDir');
+                if (!handle) {
+                    updateVaultStatus('disconnected');
+                    return;
+                }
+                const perm = await handle.queryPermission({ mode: 'readwrite' });
+                vaultHandle = handle;
+                if (perm === 'granted') {
+                    updateVaultStatus('connected');
+                    await loadAllFromVault();
+                } else {
+                    updateVaultStatus('needs-permission');
+                }
+            } catch (e) {
+                console.warn('Vault handle restore failed', e);
+                updateVaultStatus('disconnected');
+            }
+        }
+
+        // フォルダ・ファイルの読み書き（フォルダが無ければ作りながら書く）
+        async function readVaultFile(folderName, fileName) {
+            if (!vaultHandle) return null;
+            try {
+                const dirHandle = await vaultHandle.getDirectoryHandle(folderName, { create: false });
+                const fileHandle = await dirHandle.getFileHandle(fileName, { create: false });
+                const file = await fileHandle.getFile();
+                return await file.text();
+            } catch (e) {
+                if (e.name === 'NotFoundError') return null;
+                throw e;
+            }
+        }
+
+        async function writeVaultFile(folderName, fileName, content) {
+            if (!vaultHandle) throw new Error('Vault未接続');
+            const dirHandle = await vaultHandle.getDirectoryHandle(folderName, { create: true });
+            const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+            const writable = await fileHandle.createWritable();
+            await writable.write(content);
+            await writable.close();
+        }
+
+        // メモ保存（Enter キーで自動実行）
+        async function saveMemo() {
+            const text = document.getElementById('memo-text').value;
+            const category = document.getElementById('memo-category').value;
+            const tags = document.getElementById('memo-tags').value;
+
+            if (!text.trim()) {
+                return; // 空のメモは保存しない
+            }
+
+            // タイトルは最初の20文字
+            const title = text.substring(0, 20) + (text.length > 20 ? '...' : '');
+
+            const memo = {
+                timestamp: new Date().toISOString(),
+                title,
+                text,
+                category,
+                tags,
+                device: getDeviceName()
+            };
+
+            // LocalStorage に保存
+            const memos = JSON.parse(localStorage.getItem('research_os_memos') || '[]');
+            memos.push(memo);
+            localStorage.setItem('research_os_memos', JSON.stringify(memos));
+
+            // UI更新（履歴・Markdownプレビュー）
+            renderMemos();
+
+            // メモ入力欄をクリア
+            document.getElementById('memo-text').value = '';
+        }
+
+        // Vaultのメモノート（"HH:MM 本文 [端末名]" 形式）を行ごとに解析する
+        function parseMemoMarkdown(text, stamp) {
+            const lines = text.split(/\r?\n/);
+            const memos = [];
+            for (const raw of lines) {
+                const line = raw.trim();
+                const m = line.match(/^(\d{1,2}:\d{2})\s+(.*)$/);
+                if (!m) continue;
+                const [, time, restRaw] = m;
+                if (!restRaw) continue;
+
+                let rest = restRaw;
+                let device = '';
+                const dm = rest.match(/^(.*)\s\[([^\[\]]+)\]$/);
+                if (dm) {
+                    rest = dm[1].trim();
+                    device = dm[2].trim();
+                }
+                if (!rest) continue;
+
+                const [hh, mm] = time.split(':').map(Number);
+                const d = dateFromStamp(stamp);
+                d.setHours(hh, mm, 0, 0);
+                memos.push({
+                    timestamp: d.toISOString(),
+                    title: rest.substring(0, 20) + (rest.length > 20 ? '...' : ''),
+                    text: rest,
+                    category: 'default',
+                    tags: '',
+                    device
+                });
+            }
+            return memos;
+        }
+
+        // 指定日のメモをVaultから読み、ローカルに無いものだけ取り込む（ローカル優先のマージ）
+        async function loadMemosFromVaultForDate(stamp) {
+            if (!vaultHandle) return;
+            let text;
+            try {
+                text = await readVaultFile('11-TimeMemo', `${stamp}_TimeMemos.md`);
+            } catch (e) {
+                console.warn('Vault memo read failed', e);
+                return;
+            }
+            if (text == null) return; // まだファイルが無い
+
+            const vaultMemos = parseMemoMarkdown(text, stamp);
+            const all = JSON.parse(localStorage.getItem('research_os_memos') || '[]');
+            const keyOf = (time, txt) => `${time}|${txt}`;
+            const localKeys = new Set(
+                all
+                    .filter(m => stampOf(new Date(m.timestamp)) === stamp)
+                    .map(m => keyOf(new Date(m.timestamp).toTimeString().slice(0, 5), m.text))
+            );
+
+            let added = false;
+            vaultMemos.forEach(vm => {
+                const key = keyOf(new Date(vm.timestamp).toTimeString().slice(0, 5), vm.text);
+                if (!localKeys.has(key)) {
+                    all.push(vm);
+                    added = true;
+                }
+            });
+
+            if (added) {
+                all.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                localStorage.setItem('research_os_memos', JSON.stringify(all));
+            }
+            // ファイルが既にVaultにある＝保存済みとして扱う
+            markDateSaved(stamp);
+        }
+
+        // メモ表示（表示中の日付の分だけ）
+        function renderMemos() {
+            if (!viewDate) viewDate = todayStamp();
+
+            const allMemos = JSON.parse(localStorage.getItem('research_os_memos') || '[]');
+            const container = document.getElementById('memo-history');
+            const today = todayStamp();
+            const isToday = viewDate === today;
+
+            // 日付ナビの表示を更新
+            const label = document.getElementById('memo-date-label');
+            label.innerHTML = escapeHtml(formatStamp(viewDate))
+                + (isToday ? '<span class="date-nav-today">今日</span>' : '');
+            document.getElementById('memo-date-next').disabled = isToday;
+            document.getElementById('memo-date-today').disabled = isToday;
+
+            // 「本日のメモ」の統計は常に今日の件数
+            document.getElementById('memo-stat').textContent = getMemosForDate(today).length;
+
+            // 表示日のメモを、元の配列での位置を保ったまま抽出
+            const rows = allMemos
+                .map((memo, index) => ({ memo, index }))
+                .filter(r => stampOf(new Date(r.memo.timestamp)) === viewDate);
+
+            if (rows.length === 0) {
+                container.innerHTML = `<div style="color: #999; font-size: 12px; padding: 20px; text-align: center;">
+                    ${isToday ? 'メモを記録するとここに表示されます' : escapeHtml(formatStamp(viewDate)) + ' のメモはありません'}
+                </div>`;
+                renderMarkdown();
+                updatePendingBanners();
+                return;
+            }
+
+            const savedDates = getSavedDates();
+            const isSaved = savedDates.includes(viewDate);
+
+            container.innerHTML = rows.slice().reverse().map(({ memo, index }) => {
+                const time = new Date(memo.timestamp).toLocaleTimeString('ja-JP');
+                return `
+                    <div class="history-item" style="position: relative;">
+                        <div class="history-time">${escapeHtml(time)}</div>
+                        <div><strong>${escapeHtml(memo.title || '（無題）')}</strong>${deviceBadgeHtml(memo.device)}</div>
+                        <div style="font-size: 12px; margin-top: 6px; opacity: 0.8; word-break: break-word; max-height: 60px; overflow: hidden;">${escapeHtml(memo.text)}</div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+                            <div class="history-sync-badge" style="background: ${isSaved ? '#22863a' : '#999'};">
+                                ${isSaved ? 'Obsidian保存済み' : '未保存'}
+                            </div>
+                            <div style="display: flex; gap: 6px;">
+                                <button onclick="editMemo(${index})" style="padding: 4px 10px; font-size: 11px; background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer;">編集</button>
+                                <button onclick="deleteMemo(${index})" style="padding: 4px 10px; font-size: 11px; background: #d73a49; color: white; border: none; border-radius: 4px; cursor: pointer;">削除</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Markdown タブの内容も追従させる
+            renderMarkdown();
+            updatePendingBanners();
+        }
+
+        // --- タブ切り替え（リスト / Markdown） ---
+        function switchMemoTab(name) {
+            document.querySelectorAll('.tab-btn').forEach((btn) => {
+                btn.classList.toggle('active', btn.dataset.tab === name);
+            });
+            document.getElementById('memo-tab-list').style.display = name === 'list' ? '' : 'none';
+            document.getElementById('memo-tab-md').style.display = name === 'md' ? '' : 'none';
+            if (name === 'md') renderMarkdown();
+        }
+
+        // --- 日付の管理 -------------------------------------------------
+        // 画面に表示している日付（YYYY-MM-DD）。既定は今日
+        let viewDate = null;
+
+        const WEEKDAY_JA = ['日', '月', '火', '水', '木', '金', '土'];
+
+        // Date → YYYY-MM-DD（ローカル時刻基準）
+        function stampOf(date) {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        }
+
+        // YYYY-MM-DD → Date
+        function dateFromStamp(stamp) {
+            const [y, m, d] = stamp.split('-').map(Number);
+            return new Date(y, m - 1, d);
+        }
+
+        // 「8月6日(木)」のような表示用文字列
+        function formatStamp(stamp) {
+            const d = dateFromStamp(stamp);
+            return `${d.getMonth() + 1}月${d.getDate()}日(${WEEKDAY_JA[d.getDay()]})`;
+        }
+
+        function todayStamp() {
+            return stampOf(new Date());
+        }
+
+        // 指定日のメモを取得
+        function getMemosForDate(stamp) {
+            const memos = JSON.parse(localStorage.getItem('research_os_memos') || '[]');
+            return memos.filter(m => stampOf(new Date(m.timestamp)) === stamp);
+        }
+
+        // メモが存在する日付の一覧（古い順）
+        function getMemoDates() {
+            const memos = JSON.parse(localStorage.getItem('research_os_memos') || '[]');
+            return [...new Set(memos.map(m => stampOf(new Date(m.timestamp))))].sort();
+        }
+
+        // Obsidian に保存済みの日付
+        function getSavedDates() {
+            return JSON.parse(localStorage.getItem('research_os_saved_dates') || '[]');
+        }
+
+        function markDateSaved(stamp) {
+            const saved = getSavedDates();
+            if (!saved.includes(stamp)) {
+                saved.push(stamp);
+                localStorage.setItem('research_os_saved_dates', JSON.stringify(saved));
+            }
+        }
+
+        // 表示日を前後に動かす
+        async function shiftViewDate(deltaDays) {
+            const d = dateFromStamp(viewDate);
+            d.setDate(d.getDate() + deltaDays);
+            const next = stampOf(d);
+            if (next > todayStamp()) return;   // 未来には行かない
+            viewDate = next;
+            await loadMemosFromVaultForDate(viewDate);
+            renderMemos();
+        }
+
+        async function goToToday() {
+            viewDate = todayStamp();
+            await loadMemosFromVaultForDate(viewDate);
+            renderMemos();
+        }
+
+        // 指定日のメモを Markdown 化（Markdownタブと Obsidian 保存で共用）
+        function buildMarkdownForDate(stamp) {
+            const dayMemos = getMemosForDate(stamp);
+            const heading = dateFromStamp(stamp).toLocaleDateString('ja-JP');
+
+            let content = `# ${heading}\n\n`;
+            dayMemos.forEach((memo) => {
+                const time = new Date(memo.timestamp).toLocaleTimeString('ja-JP', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+
+                let line = `${time} ${memo.text}`;
+
+                const label = CATEGORY_LABELS[memo.category] || '';
+                if (label) line += ` #${label}`;
+
+                const tags = (memo.tags || '').trim();
+                if (tags) line += ` ${tags}`;
+
+                if (memo.device) line += ` [${memo.device}]`;
+
+                content += line + '\n';
+            });
+
+            return { content, count: dayMemos.length, date: stamp };
+        }
+
+        // Markdown プレビューを描画（表示中の日付の分）
+        function renderMarkdown() {
+            const pre = document.getElementById('memo-md-text');
+            if (!pre) return;
+            const md = buildMarkdownForDate(viewDate || todayStamp());
+            // textContent なので特殊文字はそのまま安全に表示される
+            pre.textContent = md.count === 0
+                ? `${formatStamp(viewDate || todayStamp())} のメモはありません`
+                : md.content;
+        }
+
+        // Markdown をクリップボードにコピー
+        async function copyMarkdown() {
+            const md = buildMarkdownForDate(viewDate || todayStamp());
+            if (md.count === 0) {
+                alert('この日のメモはありません');
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(md.content);
+                alert('Markdown をコピーしました');
+            } catch (e) {
+                alert('コピーできませんでした。テキストを選択して手動でコピーしてください。');
+            }
+        }
+
+        // ポモドーロタイマー
+        let timer = null;
+        let remaining = 25 * 60;
+        let running = false;
+        let sessions = 0;
+        // 現在選択中のプリセット（リセット先と記録する時間の基準）
+        let currentMinutes = 25;
+        let isBreak = false;
+        // 終了予定時刻(epoch ms)。残り時間はここから逆算する
+        let endsAt = null;
+
+        function formatTime(s) {
+            const m = Math.floor(s / 60);
+            const sec = s % 60;
+            return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+        }
+
+        function updateDisplay() {
+            document.getElementById('timer-display').textContent = formatTime(remaining);
+        }
+
+        // 本日のセッション数を復元（リロードしても 0 に戻らないように）
+        function restoreSessionCount() {
+            const all = JSON.parse(localStorage.getItem('research_os_sessions') || '[]');
+            const today = new Date().toLocaleDateString('ja-JP');
+            sessions = all.filter(s =>
+                new Date(s.timestamp).toLocaleDateString('ja-JP') === today).length;
+            document.getElementById('session-count').textContent = sessions;
+            document.getElementById('focus-stat').textContent = sessions;
+        }
+
+        function startTimer() {
+            if (running) return;
+
+            // 0のまま開始されたら、選択中のプリセットに戻してから始める
+            if (remaining <= 0) {
+                remaining = currentMinutes * 60;
+            }
+
+            // 終了時刻を先に決めておく。
+            // setInterval の回数を数える方式だと、バックグラウンドのタブで
+            // ブラウザに間引かれて時間が進まなくなるため。
+            endsAt = Date.now() + remaining * 1000;
+            running = true;
+
+            timer = setInterval(tickTimer, 250);
+            tickTimer();
+        }
+
+        function tickTimer() {
+            remaining = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+            updateDisplay();
+
+            if (remaining > 0) return;
+
+            clearInterval(timer);
+            timer = null;
+            running = false;
+            endsAt = null;
+
+            if (isBreak) {
+                // 休憩はセッションとして数えない
+                alert(`休憩（${currentMinutes}分）が終わりました。`);
+                return;
+            }
+
+            sessions++;
+            document.getElementById('session-count').textContent = sessions;
+            document.getElementById('focus-stat').textContent = sessions;
+
+            // 実際に走らせた長さを記録する
+            const sessionsData = JSON.parse(localStorage.getItem('research_os_sessions') || '[]');
+            sessionsData.push({
+                timestamp: new Date().toISOString(),
+                duration: currentMinutes
+            });
+            localStorage.setItem('research_os_sessions', JSON.stringify(sessionsData));
+
+            alert(`セッション完了（${currentMinutes}分）！休憩をとってください。`);
+        }
+
+        function pauseTimer() {
+            if (timer) {
+                clearInterval(timer);
+                timer = null;
+            }
+            // 経過時刻から残りを確定させてから止める
+            if (running && endsAt) {
+                remaining = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+                updateDisplay();
+            }
+            running = false;
+            endsAt = null;
+        }
+
+        function resetTimer() {
+            if (timer) clearInterval(timer);
+            timer = null;
+            endsAt = null;
+            // 25分固定ではなく、選択中のプリセットに戻す
+            remaining = currentMinutes * 60;
+            running = false;
+            updateDisplay();
+        }
+
+        function setTimer(minutes, presetKey) {
+            pauseTimer();
+            currentMinutes = minutes;
+            isBreak = String(presetKey).startsWith('break');
+            remaining = minutes * 60;
+            updateDisplay();
+            document.getElementById('timer-mode').textContent = isBreak ? '休憩時間' : '集中時間';
+
+            // プリセットボタンのアクティブ状態を更新
+            // （分数ではなくプリセット識別子で判定。10分と10分休憩の取り違えを防ぐ）
+            document.querySelectorAll('.preset-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.preset === presetKey);
+            });
+        }
+
+        // 11-TimeMemo に保存（表示中の日付のメモをまとめて Obsidian に書き出す）
+        async function saveToTimeMemo(targetDate) {
+            const stamp = targetDate || viewDate || todayStamp();
+            const md = buildMarkdownForDate(stamp);
+
+            if (md.count === 0) {
+                alert(`${formatStamp(stamp)} のメモはありません`);
+                return;
+            }
+
+            const baseName = `${stamp}_TimeMemos`;
+
+            // Vault接続済みなら直接ファイルへ書き込む（Obsidianアプリを開く必要がない）
+            if (vaultHandle) {
+                try {
+                    await writeVaultFile('11-TimeMemo', `${baseName}.md`, md.content);
+                    markDateSaved(stamp);
+                    markObsidianSaved();
+                    renderMemos();
+                    alert(`Vaultに直接保存しました\n\n${formatStamp(stamp)} のメモ ${md.count} 件\n11-TimeMemo/${baseName}.md`);
+                    return;
+                } catch (e) {
+                    console.warn('Vault write failed, falling back to URI', e);
+                }
+            }
+
+            // フォールバック：Obsidian URI（同じ日に何度押しても同じノートを上書き）
+            const encodedContent = encodeURIComponent(md.content);
+            const obsidianUri = `obsidian://new?vault=外部脳&name=11-TimeMemo/${baseName}`
+                + `&content=${encodedContent}&overwrite=true`;
+
+            window.location.href = obsidianUri;
+
+            markDateSaved(stamp);
+
+            setTimeout(() => {
+                alert(`Obsidian に保存しました\n\n${formatStamp(stamp)} のメモ ${md.count} 件\n11-TimeMemo/${baseName}`);
+                markObsidianSaved();
+                renderMemos();
+            }, 1000);
+        }
+
+        // Obsidian 保存の記録（最終保存時刻と回数を残す）
+        function markObsidianSaved() {
+            const now = new Date();
+            const time = now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+            localStorage.setItem('research_os_last_sync', time);
+            document.getElementById('last-sync').textContent = `最終 Obsidian 保存: ${time}`;
+
+            const count = parseInt(localStorage.getItem('research_os_sync_count') || '0', 10) + 1;
+            localStorage.setItem('research_os_sync_count', String(count));
+            document.getElementById('sync-count').textContent = count;
+        }
+
+        // 保存済みの状態を画面に復元
+        function restoreSyncState() {
+            const time = localStorage.getItem('research_os_last_sync');
+            document.getElementById('last-sync').textContent =
+                `最終 Obsidian 保存: ${time || '--:--'}`;
+            document.getElementById('sync-count').textContent =
+                localStorage.getItem('research_os_sync_count') || '0';
+        }
+
+        // PowerShell 同期用にエクスポート
+        function exportForPowerShell() {
+            const memos = JSON.parse(localStorage.getItem('research_os_memos') || '[]');
+
+            if (memos.length === 0) {
+                alert('エクスポートするメモがありません');
+                return;
+            }
+
+            const exportData = {
+                version: '1.0',
+                exported_at: new Date().toISOString(),
+                memos: memos
+            };
+
+            // JSON をブラウザに表示して、ユーザーが保存できるように
+            const jsonString = JSON.stringify(exportData, null, 2);
+
+            // ファイルダウンロード
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `research_os_timememo_export_${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+
+            alert(`✓ エクスポート完了\n\nファイル名:\nresearch_os_timememo_export_*.json\n\nこれを以下に配置してください:\nOneDrive\\research_os_timememo_export.json\n\nその後 PowerShell スクリプトを実行すると\n11-TimeMemo に自動保存されます`);
+        }
+
+        // タスク保存（Enter キーで自動実行）
+        async function saveTask() {
+            const text = document.getElementById('task-text').value;
+
+            if (!text.trim()) {
+                return;
+            }
+
+            const task = {
+                id: Date.now(),
+                timestamp: new Date().toISOString(),
+                text: text,
+                completed: false,
+                device: getDeviceName()
+            };
+
+            // LocalStorage に保存（新しいタスクは先頭＝最優先の位置に入れる）
+            const tasks = JSON.parse(localStorage.getItem('research_os_tasks') || '[]');
+            tasks.unshift(task);
+            localStorage.setItem('research_os_tasks', JSON.stringify(tasks));
+
+            // UI更新
+            renderTasks();
+            document.getElementById('task-text').value = '';
+        }
+
+        // 完了タスクを表示するかどうか（既定は表示）
+        function isShowCompleted() {
+            return localStorage.getItem('research_os_show_completed') !== '0';
+        }
+
+        function toggleShowCompleted() {
+            const on = document.getElementById('show-completed').checked;
+            localStorage.setItem('research_os_show_completed', on ? '1' : '0');
+            renderTasks();
+        }
+
+        // Vaultのタスクノート（"- [ ] 本文 [端末名]" / "- [x] 本文 [端末名]"）を行ごとに解析する
+        function parseTaskMarkdown(text) {
+            const lines = text.split(/\r?\n/);
+            const tasks = [];
+            for (const raw of lines) {
+                const line = raw.trim();
+                const m = line.match(/^-\s*\[([ xX])\]\s*(.+)$/);
+                if (!m) continue;
+
+                let taskText = m[2].trim();
+                let device = '';
+                const dm = taskText.match(/^(.*)\s\[([^\[\]]+)\]$/);
+                if (dm) {
+                    taskText = dm[1].trim();
+                    device = dm[2].trim();
+                }
+                if (!taskText) continue;
+
+                tasks.push({
+                    id: Date.now() + Math.random(),
+                    timestamp: new Date().toISOString(),
+                    text: taskText,
+                    completed: m[1].toLowerCase() === 'x',
+                    device
+                });
+            }
+            return tasks;
+        }
+
+        // 本日のタスクノートをVaultから読み、ローカルに無いものだけ取り込む（ローカル優先のマージ）
+        async function loadTasksFromVaultForToday() {
+            if (!vaultHandle) return 0;
+            const stamp = todayStamp();
+            let text;
+            try {
+                text = await readVaultFile('12-TaskList', `${stamp}_Tasks.md`);
+            } catch (e) {
+                console.warn('Vault task read failed', e);
+                return 0;
+            }
+            if (text == null) return 0; // まだファイルが無い
+
+            const vaultTasks = parseTaskMarkdown(text);
+            const local = JSON.parse(localStorage.getItem('research_os_tasks') || '[]');
+            const localTexts = new Set(local.map(t => t.text));
+
+            let addedCount = 0;
+            vaultTasks.forEach(vt => {
+                if (!localTexts.has(vt.text)) {
+                    local.push(vt);
+                    addedCount += 1;
+                }
+            });
+
+            if (addedCount > 0) {
+                localStorage.setItem('research_os_tasks', JSON.stringify(local));
+            }
+            return addedCount;
+        }
+
+        // 手動でVaultから最新タスクを取り込むボタン用
+        async function refreshTasksFromVault() {
+            if (!vaultHandle) {
+                alert('先にVaultへ接続してください');
+                return;
+            }
+            const added = await loadTasksFromVaultForToday();
+            await renderTaskDateView();
+            alert(added > 0 ? `Vaultから ${added} 件のタスクを取り込みました` : '新しいタスクはありませんでした');
+        }
+
+        // --- タスクの日付ナビゲーション -----------------------------------
+        // タスクは「今日」だけが編集可能なライブの一覧（LocalStorage）。
+        // 過去日を選ぶと、その日に保存されたVaultの実ファイルを読み取り専用で表示する
+        // （メモの日付ナビと同じ考え方）。
+        let taskViewDate = null;
+
+        function updateTaskDateNav() {
+            const label = document.getElementById('task-date-label');
+            if (!label) return;
+            const today = todayStamp();
+            const isToday = taskViewDate === today;
+            label.innerHTML = escapeHtml(formatStamp(taskViewDate))
+                + (isToday ? '<span class="date-nav-today">今日</span>' : '');
+            document.getElementById('task-date-next').disabled = isToday;
+            document.getElementById('task-date-today').disabled = isToday;
+        }
+
+        async function shiftTaskViewDate(deltaDays) {
+            const d = dateFromStamp(taskViewDate);
+            d.setDate(d.getDate() + deltaDays);
+            const next = stampOf(d);
+            if (next > todayStamp()) return;   // 未来には行かない
+            taskViewDate = next;
+            await renderTaskDateView();
+        }
+
+        async function goToTodayTasks() {
+            taskViewDate = todayStamp();
+            await renderTaskDateView();
+        }
+
+        // 表示中の日付に応じて、編集可能なライブ表示 / 過去日の閲覧専用表示を切り替える
+        async function renderTaskDateView() {
+            if (!taskViewDate) taskViewDate = todayStamp();
+            updateTaskDateNav();
+
+            const isToday = taskViewDate === todayStamp();
+            const editorControls = document.getElementById('task-editor-controls');
+            if (editorControls) editorControls.style.display = isToday ? '' : 'none';
+
+            if (isToday) {
+                renderTasks();
+                return;
+            }
+
+            const label = document.getElementById('task-list-label');
+            if (label) label.textContent = `${formatStamp(taskViewDate)} のタスク（閲覧のみ）`;
+
+            const container = document.getElementById('task-history');
+            if (!vaultHandle) {
+                container.innerHTML = `<div style="color: #999; font-size: 12px; padding: 20px; text-align: center;">
+                    Vaultに接続すると ${escapeHtml(formatStamp(taskViewDate))} の記録を確認できます
+                </div>`;
+                return;
+            }
+
+            let text = null;
+            try {
+                text = await readVaultFile('12-TaskList', `${taskViewDate}_Tasks.md`);
+            } catch (e) {
+                console.warn('Vault task read failed', e);
+            }
+
+            if (text == null) {
+                container.innerHTML = `<div style="color: #999; font-size: 12px; padding: 20px; text-align: center;">
+                    ${escapeHtml(formatStamp(taskViewDate))} のタスク記録はありません
+                </div>`;
+                return;
+            }
+
+            const pastTasks = parseTaskMarkdown(text);
+            if (pastTasks.length === 0) {
+                container.innerHTML = `<div style="color: #999; font-size: 12px; padding: 20px; text-align: center;">
+                    ${escapeHtml(formatStamp(taskViewDate))} のタスク記録はありません
+                </div>`;
+                return;
+            }
+
+            container.innerHTML = pastTasks.map((task) => `
+                <div class="task-item ${task.completed ? 'completed' : ''}">
+                    <input type="checkbox" class="task-checkbox" ${task.completed ? 'checked' : ''} disabled>
+                    <div class="task-text">${escapeHtml(task.text)}${deviceBadgeHtml(task.device)}</div>
+                </div>
+            `).join('');
+        }
+
+        // タスク表示
+        function renderTasks() {
+            const tasks = JSON.parse(localStorage.getItem('research_os_tasks') || '[]');
+            const container = document.getElementById('task-history');
+            const showCompleted = isShowCompleted();
+
+            const doneCount = tasks.filter(t => t.completed).length;
+
+            // 見出しに件数を出す（隠していても全体像が分かるように）
+            const label = document.getElementById('task-list-label');
+            if (label) {
+                label.textContent = tasks.length === 0
+                    ? 'タスク一覧'
+                    : `タスク一覧（完了 ${doneCount} / 全 ${tasks.length}）`;
+            }
+
+            document.getElementById('task-stat').textContent = tasks.length;
+
+            // どの経路を通ってもバナーの状態を合わせる
+            updatePendingBanners();
+
+            if (tasks.length === 0) {
+                container.innerHTML = '<div style="color: #999; font-size: 12px; padding: 20px; text-align: center;">タスクを追加するとここに表示されます</div>';
+                return;
+            }
+
+            // 元の位置（優先順位）を保ったまま絞り込む
+            const rows = tasks
+                .map((task, index) => ({ task, index }))
+                .filter(r => showCompleted || !r.task.completed);
+
+            if (rows.length === 0) {
+                container.innerHTML = `<div style="color: #999; font-size: 12px; padding: 20px; text-align: center;">
+                    未完了のタスクはありません<br>（完了 ${doneCount} 件は「完了を表示」で見られます）
+                </div>`;
+                return;
+            }
+
+            // 配列の並び＝優先順位。先頭がいちばん優先度が高い
+            container.innerHTML = rows.map(({ task, index }) => `
+                    <div class="task-item ${task.completed ? 'completed' : ''}"
+                         data-index="${index}"
+                         ondragover="onTaskDragOver(event, ${index})"
+                         ondragleave="onTaskDragLeave(event)"
+                         ondrop="onTaskDrop(event, ${index})">
+                        <span class="task-rank">${index + 1}</span>
+                        <input type="checkbox" class="task-checkbox" ${task.completed ? 'checked' : ''}
+                               onchange="toggleTask(${index})">
+                        <div class="task-text">${escapeHtml(task.text)}${deviceBadgeHtml(task.device)}</div>
+                        <div style="display: flex; gap: 6px;">
+                            <button onclick="editTask(${index})" style="padding: 4px 8px; font-size: 11px; background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer;">編集</button>
+                            <button onclick="deleteTask(${index})" style="padding: 4px 8px; font-size: 11px; background: #d73a49; color: white; border: none; border-radius: 4px; cursor: pointer;">削除</button>
+                        </div>
+                        <span class="task-grip" draggable="true"
+                              title="ここを掴んで上下にドラッグすると優先順位を入れ替えられます"
+                              ondragstart="onTaskDragStart(event, ${index})"
+                              ondragend="onTaskDragEnd(event)">⠿</span>
+                    </div>
+                `).join('');
+        }
+
+        // --- 日付が変わったときの引き継ぎ ---------------------------------
+        // 深夜に自動保存はできない（Obsidian を開く操作が必要なため）。
+        // 代わりに、開いたときへ「前日分が未保存です」と知らせてボタンで保存させる。
+
+        // 今日より前で、まだ Obsidian に保存していない日
+        function getUnsavedPastDates() {
+            const today = todayStamp();
+            const saved = getSavedDates();
+            return getMemoDates().filter(d => d < today && !saved.includes(d));
+        }
+
+        function updatePendingBanners() {
+            // --- メモ側 ---
+            const banner = document.getElementById('memo-pending-banner');
+            const unsaved = getUnsavedPastDates();
+
+            if (unsaved.length === 0 || localStorage.getItem('research_os_banner_dismissed') === todayStamp()) {
+                banner.style.display = 'none';
+            } else {
+                const latest = unsaved[unsaved.length - 1];
+                const count = getMemosForDate(latest).length;
+                const more = unsaved.length > 1 ? `（ほか ${unsaved.length - 1} 日分）` : '';
+                banner.innerHTML = `
+                    <span>${escapeHtml(formatStamp(latest))} のメモ ${count} 件が未保存です${more}</span>
+                    <span style="display: flex; gap: 4px;">
+                        <button onclick="saveToTimeMemo('${latest}')">Obsidianに保存</button>
+                        <button class="dismiss" onclick="dismissPendingBanner()" title="今日はもう表示しない">×</button>
+                    </span>`;
+                banner.style.display = '';
+            }
+
+            // --- タスク側 ---
+            const taskBanner = document.getElementById('task-pending-banner');
+            const tasks = JSON.parse(localStorage.getItem('research_os_tasks') || '[]');
+            const done = tasks.filter(t => t.completed).length;
+
+            if (done === 0 || !dayChangedOnOpen || localStorage.getItem('research_os_task_banner_dismissed') === todayStamp()) {
+                taskBanner.style.display = 'none';
+            } else {
+                taskBanner.innerHTML = `
+                    <span>前日までの完了タスクが ${done} 件あります。未完了はそのまま残ります。</span>
+                    <span style="display: flex; gap: 4px;">
+                        <button onclick="archiveCompletedTasks()">保存して片付ける</button>
+                        <button class="dismiss" onclick="dismissTaskBanner()" title="今日はもう表示しない">×</button>
+                    </span>`;
+                taskBanner.style.display = '';
+            }
+        }
+
+        function dismissPendingBanner() {
+            localStorage.setItem('research_os_banner_dismissed', todayStamp());
+            updatePendingBanners();
+        }
+
+        function dismissTaskBanner() {
+            localStorage.setItem('research_os_task_banner_dismissed', todayStamp());
+            updatePendingBanners();
+        }
+
+        // 完了タスクを Obsidian に書き出してから一覧から外す（未完了は残す）
+        function archiveCompletedTasks() {
+            const tasks = JSON.parse(localStorage.getItem('research_os_tasks') || '[]');
+            const done = tasks.filter(t => t.completed);
+
+            if (done.length === 0) {
+                alert('完了したタスクがありません');
+                return;
+            }
+
+            // 前日の日付でノートを作る
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            const stamp = stampOf(yesterday);
+            const baseName = `${stamp}_Done`;
+
+            let mdContent = `# ${stamp} 完了したタスク\n\n`;
+            done.forEach(t => {
+                const deviceTag = t.device ? ` [${t.device}]` : '';
+                mdContent += `- [x] ${t.text}${deviceTag}\n`;
+            });
+
+            const finishCleanup = () => {
+                // 戻せるように控えてから未完了だけ残す
+                snapshotTasks('完了タスクの片付け');
+                localStorage.setItem('research_os_tasks',
+                    JSON.stringify(tasks.filter(t => !t.completed)));
+                renderTasks();
+            };
+
+            if (vaultHandle) {
+                writeVaultFile('12-TaskList', `${baseName}.md`, mdContent).then(() => {
+                    finishCleanup();
+                    markObsidianSaved();
+                    alert(`Vaultに直接保存して片付けました\n\n完了 ${done.length} 件 → 12-TaskList/${baseName}.md\n未完了 ${tasks.length - done.length} 件はそのまま残っています`);
+                }).catch((e) => {
+                    console.warn('Vault write failed, falling back to URI', e);
+                    fallbackToUri();
+                });
+                return;
+            }
+            fallbackToUri();
+
+            function fallbackToUri() {
+                const obsidianUri = `obsidian://new?vault=外部脳&name=12-TaskList/${baseName}`
+                    + `&content=${encodeURIComponent(mdContent)}&overwrite=true`;
+                window.location.href = obsidianUri;
+
+                finishCleanup();
+
+                setTimeout(() => {
+                    alert(`Obsidian に保存して片付けました\n\n完了 ${done.length} 件 → 12-TaskList/${baseName}\n未完了 ${tasks.length - done.length} 件はそのまま残っています`);
+                    markObsidianSaved();
+                }, 1000);
+            }
+        }
+
+        // 起動時に日付が変わっていたか（再描画で変化しないよう一度だけ確定させる）
+        let dayChangedOnOpen = false;
+
+        function checkDayChange() {
+            const today = todayStamp();
+            const last = localStorage.getItem('research_os_last_open_date');
+
+            dayChangedOnOpen = Boolean(last) && last !== today;
+
+            // 日付をまたいだらバナーの非表示設定をリセットする
+            if (last !== today) {
+                localStorage.removeItem('research_os_banner_dismissed');
+                localStorage.removeItem('research_os_task_banner_dismissed');
+                localStorage.setItem('research_os_last_open_date', today);
+            }
+        }
+
+        // --- 削除の取り消し（直前の一手だけ戻せる） ---
+        let taskUndoSnapshot = null;
+
+        // 破壊的な操作の直前に、その時点のタスク一覧を控えておく
+        function snapshotTasks(label) {
+            taskUndoSnapshot = {
+                tasks: JSON.parse(localStorage.getItem('research_os_tasks') || '[]'),
+                label
+            };
+            updateUndoButton();
+        }
+
+        function undoTaskChange() {
+            if (!taskUndoSnapshot) return;
+
+            const { tasks, label } = taskUndoSnapshot;
+            localStorage.setItem('research_os_tasks', JSON.stringify(tasks));
+            taskUndoSnapshot = null;
+
+            renderTasks();
+            updateUndoButton();
+            alert(`「${label}」を元に戻しました（${tasks.length}件）`);
+        }
+
+        function updateUndoButton() {
+            const btn = document.getElementById('task-undo-btn');
+            if (!btn) return;
+            btn.disabled = !taskUndoSnapshot;
+            btn.title = taskUndoSnapshot
+                ? `「${taskUndoSnapshot.label}」を元に戻す`
+                : '元に戻せる操作はありません';
+        }
+
+        // --- 優先順位のドラッグ＆ドロップ ---
+        let dragFromIndex = null;
+
+        function clearDropMarkers() {
+            document.querySelectorAll('.task-item.drop-above, .task-item.drop-below')
+                .forEach(el => el.classList.remove('drop-above', 'drop-below'));
+        }
+
+        // ドラッグを開始できるのは右端のグリップだけ。
+        // 掴んだのはグリップでも、動かす対象と見た目は行そのものにする。
+        function onTaskDragStart(event, index) {
+            dragFromIndex = index;
+            event.dataTransfer.effectAllowed = 'move';
+            // Firefox はデータをセットしないとドラッグが始まらない
+            try { event.dataTransfer.setData('text/plain', String(index)); } catch (e) {}
+
+            const row = event.currentTarget.closest('.task-item');
+            if (!row) return;
+
+            // ドラッグ中のプレビューを行全体にする
+            if (event.dataTransfer.setDragImage) {
+                const rect = row.getBoundingClientRect();
+                event.dataTransfer.setDragImage(row, rect.width - 20, rect.height / 2);
+            }
+            row.classList.add('dragging');
+        }
+
+        // カーソルが行の上半分なら「その上に挿入」、下半分なら「その下に挿入」
+        function isBelowMidpoint(event, element) {
+            const rect = element.getBoundingClientRect();
+            return (event.clientY - rect.top) > rect.height / 2;
+        }
+
+        function onTaskDragOver(event, index) {
+            if (dragFromIndex === null) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+
+            clearDropMarkers();
+            if (index === dragFromIndex) return;
+
+            const el = event.currentTarget;
+            el.classList.add(isBelowMidpoint(event, el) ? 'drop-below' : 'drop-above');
+        }
+
+        function onTaskDragLeave(event) {
+            event.currentTarget.classList.remove('drop-above', 'drop-below');
+        }
+
+        function onTaskDrop(event, index) {
+            event.preventDefault();
+            if (dragFromIndex === null) return;
+
+            const to = index + (isBelowMidpoint(event, event.currentTarget) ? 1 : 0);
+            moveTask(dragFromIndex, to);
+            dragFromIndex = null;
+        }
+
+        function onTaskDragEnd() {
+            dragFromIndex = null;
+            clearDropMarkers();
+            document.querySelectorAll('.task-item.dragging')
+                .forEach(el => el.classList.remove('dragging'));
+        }
+
+        // from 番目のタスクを to の位置へ移動する
+        function moveTask(from, to) {
+            const tasks = JSON.parse(localStorage.getItem('research_os_tasks') || '[]');
+            if (from < 0 || from >= tasks.length) return;
+
+            // 自分を配列から抜いた分、後方への移動は 1 つ詰まる
+            let target = to > from ? to - 1 : to;
+            target = Math.max(0, Math.min(tasks.length - 1, target));
+
+            if (target === from) {
+                renderTasks();
+                return;
+            }
+
+            const [moved] = tasks.splice(from, 1);
+            tasks.splice(target, 0, moved);
+            localStorage.setItem('research_os_tasks', JSON.stringify(tasks));
+            renderTasks();
+        }
+
+        // タスク完了切り替え
+        function toggleTask(index) {
+            const tasks = JSON.parse(localStorage.getItem('research_os_tasks') || '[]');
+            tasks[index].completed = !tasks[index].completed;
+            localStorage.setItem('research_os_tasks', JSON.stringify(tasks));
+            renderTasks();
+        }
+
+        // タスク編集
+        function editTask(index) {
+            const tasks = JSON.parse(localStorage.getItem('research_os_tasks') || '[]');
+            const task = tasks[index];
+
+            const newText = prompt('タスク内容を編集:', task.text);
+            if (newText !== null && newText.trim()) {
+                task.text = newText;
+                localStorage.setItem('research_os_tasks', JSON.stringify(tasks));
+                renderTasks();
+            }
+        }
+
+        // タスク削除
+        function deleteTask(index) {
+            if (confirm('このタスクを削除しますか？')) {
+                snapshotTasks('タスクの削除');
+                const tasks = JSON.parse(localStorage.getItem('research_os_tasks') || '[]');
+                tasks.splice(index, 1);
+                localStorage.setItem('research_os_tasks', JSON.stringify(tasks));
+                renderTasks();
+            }
+        }
+
+        // 完了済みタスクを削除
+        function clearCompletedTasks() {
+            const tasks = JSON.parse(localStorage.getItem('research_os_tasks') || '[]');
+            const remaining = tasks.filter(t => !t.completed);
+
+            if (remaining.length === tasks.length) {
+                alert('完了したタスクがありません');
+                return;
+            }
+
+            snapshotTasks('完了を削除');
+            localStorage.setItem('research_os_tasks', JSON.stringify(remaining));
+            renderTasks();
+        }
+
+        // タスクを Obsidian に保存
+        async function saveToTaskList() {
+            const tasks = JSON.parse(localStorage.getItem('research_os_tasks') || '[]');
+
+            if (tasks.length === 0) {
+                alert('保存するタスクがありません');
+                return;
+            }
+
+            const dateStr = todayStamp();
+            const baseName = `${dateStr}_Tasks`;
+
+            let mdContent = `# ${dateStr} のタスク\n\n`;
+
+            tasks.forEach((task) => {
+                const checkbox = task.completed ? '- [x]' : '- [ ]';
+                const deviceTag = task.device ? ` [${task.device}]` : '';
+                mdContent += `${checkbox} ${task.text}${deviceTag}\n`;
+            });
+
+            // Vault接続済みなら直接ファイルへ書き込む
+            if (vaultHandle) {
+                try {
+                    await writeVaultFile('12-TaskList', `${baseName}.md`, mdContent);
+                    markObsidianSaved();
+                    alert(`Vaultに直接保存しました\n\nタスク数: ${tasks.length}個\n12-TaskList/${baseName}.md`);
+                    return;
+                } catch (e) {
+                    console.warn('Vault write failed, falling back to URI', e);
+                }
+            }
+
+            // フォールバック：Obsidian URI（同じ日に何度押しても同じノートを上書き）
+            const encodedContent = encodeURIComponent(mdContent);
+            const obsidianUri = `obsidian://new?vault=外部脳&name=12-TaskList/${baseName}`
+                + `&content=${encodedContent}&overwrite=true`;
+
+            window.location.href = obsidianUri;
+
+            setTimeout(() => {
+                alert(`Obsidian に保存しました\n\nタスク数: ${tasks.length}個\n\n保存後は「すべて消去」でリストを空にできます。`);
+                markObsidianSaved();
+            }, 1000);
+        }
+
+        // タスクを全件消去（Obsidian に保存した後の片付け用）
+        function clearAllTasks() {
+            const tasks = JSON.parse(localStorage.getItem('research_os_tasks') || '[]');
+
+            if (tasks.length === 0) {
+                alert('消去するタスクがありません');
+                return;
+            }
+
+            if (!confirm(`タスク ${tasks.length} 件をすべて消去します。\nObsidian に保存済みか確認してください。\n\n消去しますか？`)) {
+                return;
+            }
+
+            snapshotTasks('すべて消去');
+            localStorage.setItem('research_os_tasks', '[]');
+            renderTasks();
+        }
+
+        // キーボードショートカット
+        document.getElementById('memo-text').addEventListener('keydown', (e) => {
+            // Enter で保存
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                saveMemo();
+            }
+        });
+
+        document.getElementById('task-text').addEventListener('keydown', (e) => {
+            // Enter で保存
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                saveTask();
+            }
+        });
+
+        // メモ編集
+        function editMemo(index) {
+            const memos = JSON.parse(localStorage.getItem('research_os_memos') || '[]');
+            const memo = memos[index];
+
+            const newText = prompt('メモ内容を編集:', memo.text);
+            if (newText !== null) {
+                memo.text = newText;
+                localStorage.setItem('research_os_memos', JSON.stringify(memos));
+                renderMemos();
+            }
+        }
+
+        // メモ削除
+        function deleteMemo(index) {
+            if (confirm('このメモを削除しますか？')) {
+                const memos = JSON.parse(localStorage.getItem('research_os_memos') || '[]');
+                memos.splice(index, 1);
+                localStorage.setItem('research_os_memos', JSON.stringify(memos));
+                renderMemos();
+            }
+        }
+
+        // 並び順の意味が変わったので、既存データを一度だけ反転して見た目を保つ
+        // （旧: 配列は古い順で、表示時に反転 → 新: 配列の並びがそのまま優先順位）
+        function migrateTaskOrderOnce() {
+            if (localStorage.getItem('research_os_task_order_v2')) return;
+
+            const tasks = JSON.parse(localStorage.getItem('research_os_tasks') || '[]');
+            if (tasks.length > 1) {
+                localStorage.setItem('research_os_tasks', JSON.stringify(tasks.reverse()));
+            }
+            localStorage.setItem('research_os_task_order_v2', '1');
+        }
+
+        // 初期化
+        migrateTaskOrderOnce();
+        checkDayChange();
+        viewDate = todayStamp();
+        taskViewDate = todayStamp();
+        document.getElementById('show-completed').checked = isShowCompleted();
+        renderMemos();
+        renderTaskDateView();
+        updateDisplay();
+        restoreSyncState();
+        restoreSessionCount();
+        updateUndoButton();
+        updateVaultStatus(isFsApiSupported() ? 'disconnected' : 'unsupported');
+        restoreVaultHandle();
+        updateDeviceBadge();
+        document.getElementById('app-version-label').textContent =
+            `v${APP_VERSION}（${CHANGELOG[0].date}）`;
+    </script>
+</body>
+</html>

@@ -25,6 +25,11 @@ This folder is the Claude-based port of the Codex `OpenAI-Agent` research-automa
 `migration-check`、`device-monitor`、`sync-command-log`。
 Crossref（論文メタデータ取得）は無料。ルーティング・検証・OneNote記録はすべてローカル処理。
 
+**文献検索は既定でCowork(Claude本体)が直接行う（ルール, 2026-07-31）。** 「論文探して」系は、
+WebSearch/WebFetch/**Crossref REST**（例: `api.crossref.org/journals/2041-1723/works?query=...&filter=from-pub-date:YYYY-MM-DD,until-pub-date:...`、
+Nat Commun ISSN=2041-1723）でCoworkが自分で探してDOI付きで返す（追加API課金なし・本人APIキー不使用・私的データ外部送信なし）。
+システムの `paper-search`（`daily_paper_search.py`＝Claude採点＋外部検索で課金し得る）は**明示指定＋課金承認があるときだけ**実行する。
+
 ## Working Directory
 
 Run commands from:
@@ -65,6 +70,31 @@ Use the following destinations for new journal and paper-summary pages (2026-07-
 do not write new journal or paper-summary pages there. The notebook can be overridden with the
 `ONENOTE_NOTEBOOK_NAME` environment variable (`summarize_note5.py`), `-NotebookName`
 (`append_onenote_experiment_day_to_ppt.ps1`, `experiment_tracker.ps1`), etc.
+
+### 論文要約ノートには元PDFを必ず添付する（ルール, 2026-07-30）
+
+**`FarEasternTribe` / `論文要約` セクションの各要約ノートには、読み込んだ論文PDFを要約本文の直後に
+添付する。**（OneNote `<one:InsertedFile>` として。ユーザー方針。）
+
+- **新規要約:** `tools/add_paper_summaries_to_onenote.py` が要約テキストの後に該当PDFを
+  `<one:InsertedFile pathCache=... preferredName=.../>` で自動添付する（`build_page_xml`）。
+  この挙動は削除・退行させない。
+- **既存/手動ノートの補完:** `tools/attach_paper_pdfs_to_onenote.ps1` を実行する。
+  既に `InsertedFile` を持つページはスキップ。PDF解決は2段階:
+  (1) 本文の `Local PDF:` 行からパス解決（古いパスはライブラリ同名PDFへフォールバック）、
+  (2) `Local PDF:` 行が無いページは**ページタイトルをライブラリ索引 (`index/*.md` の `- Title:`) と
+  正規化照合**して該当PDFを添付（手動作成ノート対策）。既定ライブラリは
+  `...\0000000000OpenAI_Agent\OpenAI-Agent\papers\library`（`-LibraryDir` で変更可。Codex側の実体）。
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File .\tools\attach_paper_pdfs_to_onenote.ps1        # ドライラン
+  powershell -ExecutionPolicy Bypass -File .\tools\attach_paper_pdfs_to_onenote.ps1 -Apply # 適用
+  ```
+- **根本原因（2026-07-30調査）:** PDF未添付ノートは手動コピペ経路 `paper_to_onenote.py`（HTMLを開いて
+  ユーザーが手貼りするだけでCOM書き込みせず、PDF添付も `Local PDF:` 行も生成しない）または完全手動作成が原因。
+  対策として `paper_to_onenote.py` は貼り付け後に上記添付スクリプトを実行するよう出力で促す。
+  **PDF添付まで自動化したい場合は手動フローではなく `tools/add_paper_summaries_to_onenote.py` を使う（COMで要約＋PDF添付を完結・推奨）。**
+- **例外:** ライブラリに該当PDF/索引が無いトピックノート（単一論文でないもの）は自動対象外。手動添付する。
+- OneNote Desktop 起動・サインイン・同期済みの対話セッションが前提（COM）。
 Note: `tools/add_synthesis_pdf_to_onenote.py`（有機合成）はCodex版と同じく既定 `2026実験` のまま
 （有機合成セクションは未移行）。`experiment_tracker.ps1`（実験ボード）は実験ページ移行に合わせ
 `FarEasternTribe` 既定に変更済み。
@@ -255,6 +285,21 @@ transcribe only the changed-region images in `manifest.json`
 `.agent_runtime\transcription_state\<SHA-256 title key>\baseline`.
 Note: `pdftoppm` (Poppler) is required; the Claude fork falls back to the Codex runtime's bundled
 Poppler on this PC if it is not on PATH.
+
+#### 文字起こし後は外部脳(Obsidian)へ .md も出力する（ルール, 2026-07-31）
+
+**手書き文字起こしをOneNoteへ保存したら、必ず `mirror_transcription_to_vault.ps1` を実行して
+外部脳(Obsidian)へ同じ内容の .md も出力する。**（ユーザー方針。`handwriting_transcription_route`
+の検証チェックにも必須項目として追加済み＝実行コピー側。）
+
+- ミラー先: `...\0000000000OpenAI_Agent_Claude\外部脳\日常ログ\YYYY-MM-DD.md`（Obsidian vault。
+  frontmatter付き。日付ごとに最も情報量の多い版を採用。`_日常ログMOC.md` も自動再生成）。冪等・上書き。
+  ```powershell
+  powershell -STA -NoProfile -ExecutionPolicy Bypass -File .\mirror_transcription_to_vault.ps1 -Date today
+  powershell -STA -NoProfile -ExecutionPolicy Bypass -File .\mirror_transcription_to_vault.ps1 -All      # 全期間
+  ```
+- **目的:** Claude(Cowork/Claude Code)がセッションを跨いで本人の日常文脈を連続参照できる外部記憶に
+  するため。OneNote Desktop 起動・COM前提。PS1は日本語を含むので UTF-8 BOM保存。
 
 ### Route a request through the orchestrator
 

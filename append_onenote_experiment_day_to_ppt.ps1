@@ -2,7 +2,7 @@
   [string]$Date = (Get-Date).ToString('yyyy-MM-dd'),
   [string]$NotebookName = 'FarEasternTribe',
   [string]$SectionName = '実験',
-  [string]$Pptx = '.\Experiment.pptx',
+  [string]$Pptx = '.\実験PPT生成\Experiment.pptx',
   [string]$Device = '',
   [string]$OutboxDir = '.\agent_workspace\実験ノートAgent\onenote_to_ppt',
   [switch]$Force,
@@ -11,7 +11,7 @@
 )
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'toolsgent_common.ps1')
+. (Join-Path $PSScriptRoot 'tools\agent_common.ps1')
 
 $Workspace = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location $Workspace
@@ -233,6 +233,14 @@ try {
   $dateKey = $dateValue.ToString('yyyy-MM-dd')
   if ($Force) {
     $ReplaceDateSlides = $true
+  }
+
+  # 既定の実験PPT保存先フォルダ。-Pptx にディレクトリ指定が無い「素のファイル名」は
+  # ここ(実験PPT生成)へ入れる。ディレクトリ付きの明示指定はそのまま尊重する。
+  $defaultPptxDir = Join-Path (Get-Location).Path '実験PPT生成'
+  if ([string]::IsNullOrWhiteSpace([System.IO.Path]::GetDirectoryName($Pptx))) {
+    New-Item -ItemType Directory -Path $defaultPptxDir -Force | Out-Null
+    $Pptx = Join-Path $defaultPptxDir $Pptx
   }
 
   if (Test-Path -LiteralPath $Pptx) {
